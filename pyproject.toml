@@ -1,0 +1,15 @@
+[project]
+name = "vighnaharta-receipts"
+version = "0.1.0"
+description = "Paperless donation e-receipt system for Dadar Cha Vighnaharta Ganpati Mandal"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit",
+    "fpdf2",
+    "gspread",
+    "google-auth",
+    "google-auth-oauthlib",
+    "python-dotenv",
+    "requests",
+]
