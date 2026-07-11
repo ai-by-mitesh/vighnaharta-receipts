@@ -1,0 +1,7 @@
+streamlit
+fpdf2
+gspread
+google-auth
+google-auth-oauthlib
+python-dotenv
+requests
