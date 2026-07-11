@@ -29,8 +29,9 @@ htmlcov/
 service_account.json
 .streamlit/secrets.toml
 
-# Generated receipts
+# Generated receipts & logo cache
 *.pdf
+.cache/
 
 # OS
 .DS_Store

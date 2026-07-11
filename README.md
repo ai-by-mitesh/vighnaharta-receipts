@@ -23,6 +23,9 @@ vighnaharta-receipts/
 ├── sheets_logger.py       # Google Sheets logging
 ├── wappfly_sender.py      # WhatsApp message sender
 ├── utils.py               # Shared helpers
+├── assets/
+│   ├── fonts/             # Poppins TTFs for PDF
+│   └── images/            # profile_image.png, ganpati_vector.jpg
 ├── src/                   # Package root (future modules)
 ├── .streamlit/config.toml # Streamlit theme & settings
 ├── pyproject.toml

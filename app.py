@@ -19,7 +19,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from pdf_generator import generate_receipt
+from pdf_generator import DEFAULT_NOTES, generate_receipt
 from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
 from utils import format_currency, format_receipt_number, normalize_phone
 
@@ -29,10 +29,14 @@ PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
 # Injected once per run — modern card UI without extra frontend deps.
 _CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
 
-html, body, [class*="css"] {
-    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+html, body, [class*="css"],
+.stApp, .stApp *,
+.stMarkdown, .stTextInput, .stNumberInput, .stSelectbox, .stTextArea, .stRadio,
+.stButton, .stForm, div[data-testid="stForm"],
+button, input, textarea, label, p, h1, h2, h3, h4, h5, h6, span {
+    font-family: "Poppins", sans-serif !important;
 }
 
 /* Soft page backdrop */
@@ -107,7 +111,7 @@ header { visibility: hidden; }
 }
 
 .vr-hero h1 {
-    font-family: "Fraunces", Georgia, serif;
+    font-family: "Poppins", sans-serif !important;
     font-size: 1.85rem;
     font-weight: 700;
     line-height: 1.15;
@@ -149,7 +153,7 @@ header { visibility: hidden; }
 }
 
 .vr-card-label h2 {
-    font-family: "Fraunces", Georgia, serif;
+    font-family: "Poppins", sans-serif !important;
     font-size: 1.2rem;
     font-weight: 700;
     color: #1c1c1c;
@@ -279,7 +283,7 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
 }
 
 .vr-success h3 {
-    font-family: "Fraunces", Georgia, serif;
+    font-family: "Poppins", sans-serif !important;
     font-size: 1.35rem;
     margin: 0 0 0.25rem 0;
     color: #14261b;
@@ -352,11 +356,11 @@ def _render_hero() -> None:
     st.markdown(
         """
         <div class="vr-hero">
-            <div class="vr-kicker">Dadar Cha Vighnaharta</div>
+            <div class="vr-kicker">दादरचा विघ्नहर्ता</div>
             <h1>Paperless Receipts</h1>
             <p>
-                Issue paperless donation e-receipts in seconds, PDF ready to
-                download, records saved for accounting automatically.
+                Issue paperless donation e-receipts in seconds,
+                PDF ready to download, records saved for accounting automatically.
             </p>
             </br>
             <div class="vr-hero-meta">
@@ -510,6 +514,8 @@ def _process_donation(
     date_display = now.strftime("%d %B %Y")
     date_log = now.strftime("%Y-%m-%d %H:%M:%S")
     phone = normalize_phone(whatsapp)
+    # Default note when the form field is left blank
+    notes_final = notes.strip() or DEFAULT_NOTES
 
     donation = {
         "receipt_no": receipt_no,
@@ -517,7 +523,7 @@ def _process_donation(
         "whatsapp": phone,
         "amount": amount,
         "payment_mode": payment_mode,
-        "notes": notes.strip(),
+        "notes": notes_final,
         "date": date_display,
     }
 
@@ -549,7 +555,7 @@ def _process_donation(
         payment_mode=payment_mode,
         phone=phone,
         date_display=date_display,
-        notes=notes,
+        notes=notes_final,
         sheet_ok=sheet_ok,
     )
 

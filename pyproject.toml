@@ -12,4 +12,6 @@ dependencies = [
     "google-auth-oauthlib",
     "python-dotenv",
     "requests",
+    "pillow",
+    "uharfbuzz>=0.55.0",
 ]
