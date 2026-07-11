@@ -4,10 +4,18 @@ Google Sheets logging for Vighnaharta Receipts.
 Connects with a service account, appends donation rows, and derives the next
 receipt number from the last logged row.
 
-Credentials resolution (for local + Streamlit Cloud):
-1. ``st.secrets["gcp_service_account"]`` dict when available
-2. Path from ``st.secrets["gcp"]["service_account_file"]`` if set
-3. Local ``service_account.json`` (or ``GOOGLE_SERVICE_ACCOUNT_FILE`` env)
+Credentials & sheet config live in ``.streamlit/secrets.toml``::
+
+    [gcp]
+    spreadsheet_id = "..."
+    worksheet_name = "Donations"
+
+    [gcp_service_account]
+    type = "service_account"
+    project_id = "..."
+    private_key = \"\"\"...\"\"\"
+    client_email = "..."
+    ...
 """
 
 from __future__ import annotations
@@ -15,7 +23,6 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import gspread
@@ -39,7 +46,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-DEFAULT_SERVICE_ACCOUNT_FILE = "service_account.json"
 # Receipt number lives in column A
 RECEIPT_COL_INDEX = 0
 
@@ -79,12 +85,11 @@ def _resolve_spreadsheet_config(
     """
     Resolve spreadsheet id and worksheet name from args, secrets, or env.
 
-    Expected secrets layout (future deployment)::
+    Expected secrets layout::
 
         [gcp]
         spreadsheet_id = "..."
         worksheet_name = "Donations"
-        service_account_file = "service_account.json"  # optional local path
 
         [gcp_service_account]
         type = "service_account"
@@ -110,40 +115,33 @@ def _resolve_spreadsheet_config(
     if not sid:
         raise ValueError(
             "Google Spreadsheet ID is not configured. "
-            "Set st.secrets['gcp']['spreadsheet_id'] or GOOGLE_SPREADSHEET_ID."
+            "Set st.secrets['gcp']['spreadsheet_id'] in .streamlit/secrets.toml."
         )
     return str(sid), str(ws)
 
 
 def _build_credentials() -> Credentials:
     """
-    Build Google service-account credentials.
+    Build Google service-account credentials from Streamlit secrets.
 
-    Prefer ``st.secrets['gcp_service_account']`` (dict) for cloud deploy;
-    otherwise load a JSON key file from disk.
+    Reads ``st.secrets['gcp_service_account']`` (from ``.streamlit/secrets.toml``
+    locally, or Streamlit Cloud secrets in production).
     """
     secrets = _try_streamlit_secrets() or {}
-
-    # 1) Inline service-account JSON in Streamlit secrets
     sa_info = _as_dict(secrets.get("gcp_service_account"))
-    if sa_info:
-        return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
 
-    # 2) Path from secrets / env / default filename
-    gcp = _as_dict(secrets.get("gcp"))
-    path = (
-        gcp.get("service_account_file")
-        or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        or DEFAULT_SERVICE_ACCOUNT_FILE
-    )
-    key_path = Path(path)
-    if not key_path.is_file():
-        raise FileNotFoundError(
-            f"Service account file not found: {key_path}. "
-            "Place service_account.json in the project root, or set "
-            "st.secrets['gcp_service_account']."
+    if not sa_info:
+        raise ValueError(
+            "Google service account is not configured. "
+            "Add a [gcp_service_account] section to .streamlit/secrets.toml "
+            "(fields from the service account JSON key)."
         )
-    return Credentials.from_service_account_file(str(key_path), scopes=SCOPES)
+
+    # private_key in TOML multiline strings may keep a leading newline
+    if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
+        sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n").strip() + "\n"
+
+    return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
 
 
 def connect_to_sheet(

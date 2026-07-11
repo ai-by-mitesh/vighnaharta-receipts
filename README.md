@@ -48,11 +48,12 @@ vighnaharta-receipts/
    # or: uv sync
    ```
 
-3. **Configure secrets** (Google service account, Wappfly API keys, etc.):
+3. **Configure secrets** (Google Sheets + service account, Wappfly API keys, etc.):
 
-   - Copy credentials into `.env` (never commit this file)
-   - Place `service_account.json` in the project root (gitignored)
-   - Optionally add Streamlit secrets under `.streamlit/secrets.toml`
+   - Put config in `.streamlit/secrets.toml` (gitignored) under:
+     - `[gcp]` — `spreadsheet_id`, `worksheet_name`
+     - `[gcp_service_account]` — full service account key fields (from the Google JSON key)
+   - Never commit secrets or raw key files
 
 4. **Launch the app**:
 
