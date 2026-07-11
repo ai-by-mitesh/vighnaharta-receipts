@@ -13,6 +13,7 @@ Flow on submit:
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +24,350 @@ from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_nu
 from utils import format_currency, format_receipt_number, normalize_phone
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
+PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
+
+# Injected once per run — modern card UI without extra frontend deps.
+_CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Soft page backdrop */
+.stApp {
+    background:
+        radial-gradient(1200px 500px at 10% -10%, #ffe0c2 0%, transparent 55%),
+        radial-gradient(900px 420px at 100% 0%, #ffd6a8 0%, transparent 50%),
+        linear-gradient(180deg, #fffaf5 0%, #ffffff 42%, #fff8f1 100%);
+}
+
+/* Hide default Streamlit chrome noise */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+header { visibility: hidden; }
+
+.block-container {
+    padding-top: 1.4rem;
+    padding-bottom: 3rem;
+    max-width: 760px;
+}
+
+/* —— Hero —— */
+.vr-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 22px;
+    padding: 1.6rem 1.7rem 1.45rem;
+    margin-bottom: 1.25rem;
+    color: #fff;
+    background: linear-gradient(135deg, #e85d04 0%, #f48c06 48%, #ffba08 120%);
+    box-shadow:
+        0 18px 40px rgba(232, 93, 4, 0.28),
+        0 2px 0 rgba(255, 255, 255, 0.25) inset;
+}
+
+.vr-hero::after {
+    content: "";
+    position: absolute;
+    right: -40px;
+    top: -40px;
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.vr-hero::before {
+    content: "";
+    position: absolute;
+    left: -30px;
+    bottom: -50px;
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.vr-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.92;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    padding: 0.28rem 0.7rem;
+    margin-bottom: 0.75rem;
+}
+
+.vr-hero h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 1.85rem;
+    font-weight: 700;
+    line-height: 1.15;
+    margin: 0 0 0.4rem 0;
+    letter-spacing: -0.02em;
+}
+
+.vr-hero p {
+    margin: 0;
+    font-size: 0.98rem;
+    opacity: 0.95;
+    max-width: 34rem;
+    line-height: 1.45;
+}
+
+.vr-hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1.05rem;
+}
+
+.vr-chip {
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    padding: 0.32rem 0.72rem;
+}
+
+/* —— Form card —— */
+.vr-card-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0.25rem 0 0.85rem;
+}
+
+.vr-card-label h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #1c1c1c;
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.vr-card-label span {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #e85d04;
+    background: #fff4e8;
+    border: 1px solid #ffd7b0;
+    border-radius: 999px;
+    padding: 0.28rem 0.65rem;
+    white-space: nowrap;
+}
+
+div[data-testid="stForm"] {
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(232, 93, 4, 0.12);
+    border-radius: 20px;
+    padding: 1.35rem 1.35rem 1.15rem;
+    box-shadow:
+        0 10px 30px rgba(28, 28, 28, 0.05),
+        0 1px 0 rgba(255, 255, 255, 0.8) inset;
+    backdrop-filter: blur(8px);
+}
+
+/* Inputs */
+.stTextInput label,
+.stNumberInput label,
+.stSelectbox label,
+.stTextArea label,
+.stRadio label {
+    font-weight: 600 !important;
+    color: #2b2b2b !important;
+    font-size: 0.9rem !important;
+}
+
+.stTextInput input,
+.stNumberInput input,
+.stTextArea textarea {
+    border-radius: 12px !important;
+    border: 1px solid #eadfd3 !important;
+    background: #fffdfb !important;
+    min-height: 2.7rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stTextArea textarea:focus {
+    border-color: #e85d04 !important;
+    box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.15) !important;
+}
+
+div[data-baseweb="select"] > div {
+    border-radius: 12px !important;
+    border-color: #eadfd3 !important;
+    background: #fffdfb !important;
+}
+
+/* Radio as modern mode picker */
+div[role="radiogroup"] {
+    gap: 0.5rem !important;
+    flex-wrap: wrap !important;
+}
+
+div[role="radiogroup"] label {
+    background: #fff8f1 !important;
+    border: 1px solid #f0e0d0 !important;
+    border-radius: 12px !important;
+    padding: 0.55rem 0.9rem !important;
+    margin: 0 !important;
+    transition: all 0.15s ease;
+}
+
+div[role="radiogroup"] label:hover {
+    border-color: #e85d04 !important;
+    background: #fff1e3 !important;
+}
+
+/* Primary CTA */
+div[data-testid="stForm"] .stButton > button[kind="primary"],
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #e85d04 0%, #f48c06 100%) !important;
+    border: none !important;
+    border-radius: 14px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.01em;
+    min-height: 3rem;
+    box-shadow: 0 10px 22px rgba(232, 93, 4, 0.28) !important;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 28px rgba(232, 93, 4, 0.34) !important;
+}
+
+/* Success receipt card */
+.vr-success {
+    border-radius: 20px;
+    border: 1px solid rgba(34, 160, 90, 0.18);
+    background:
+        linear-gradient(180deg, #f3fff8 0%, #ffffff 55%);
+    padding: 1.35rem 1.4rem 1.2rem;
+    margin: 0.5rem 0 1rem;
+    box-shadow: 0 12px 28px rgba(28, 28, 28, 0.05);
+}
+
+.vr-success-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #178a4b;
+    background: #e5f8ed;
+    border-radius: 999px;
+    padding: 0.28rem 0.65rem;
+    margin-bottom: 0.7rem;
+}
+
+.vr-success h3 {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 1.35rem;
+    margin: 0 0 0.25rem 0;
+    color: #14261b;
+}
+
+.vr-success .vr-receipt-id {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #e85d04;
+    margin-bottom: 1rem;
+}
+
+.vr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem 1rem;
+}
+
+.vr-field {
+    background: #fffaf5;
+    border: 1px solid #f0e4d7;
+    border-radius: 12px;
+    padding: 0.7rem 0.85rem;
+}
+
+.vr-field .lbl {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #8a7460;
+    margin-bottom: 0.2rem;
+}
+
+.vr-field .val {
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: #1c1c1c;
+    word-break: break-word;
+}
+
+.vr-field.full {
+    grid-column: 1 / -1;
+}
+
+.vr-status-ok { color: #178a4b; }
+.vr-status-warn { color: #b45309; }
+
+.vr-footnote {
+    text-align: center;
+    color: #9a8572;
+    font-size: 0.82rem;
+    margin-top: 1.5rem;
+}
+
+@media (max-width: 640px) {
+    .vr-hero h1 { font-size: 1.5rem; }
+    .vr-grid { grid-template-columns: 1fr; }
+    div[data-testid="stForm"] { padding: 1rem; }
+}
+</style>
+"""
+
+
+def _inject_styles() -> None:
+    st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def _render_hero() -> None:
+    st.markdown(
+        """
+        <div class="vr-hero">
+            <div class="vr-kicker">Dadar Cha Vighnaharta</div>
+            <h1>Paperless Receipts</h1>
+            <p>
+                Issue paperless donation e-receipts in seconds, PDF ready to
+                download, records saved for accounting automatically.
+            </p>
+            </br>
+            <div class="vr-hero-meta">
+                <span class="vr-chip">⚡ Instant PDF</span>
+                <span class="vr-chip">📤 Google Sheets sync</span>
+                <span class="vr-chip">🧡 Mandal ready</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _init_page() -> None:
@@ -30,9 +375,9 @@ def _init_page() -> None:
         page_title="Vighnaharta Receipts",
         page_icon="🙏",
         layout="centered",
+        initial_sidebar_state="collapsed",
     )
-    st.title("🙏 Vighnaharta Receipts")
-    st.caption("Dadar Cha Vighnaharta · Paperless donation e-receipts")
+    _inject_styles()
 
 
 def _validate(
@@ -72,17 +417,84 @@ def _allocate_receipt_number() -> tuple[str, object | None]:
         receipt_no = get_next_receipt_number(worksheet)
         return receipt_no, worksheet
     except Exception as exc:
-        # Local / first-run fallback so the form still works without Sheets
         st.warning(
             f"Could not reach Google Sheets for receipt numbering ({exc}). "
             "Using a temporary local number — row will not be logged until Sheets is configured."
         )
-        # Session counter avoids collisions within one browser session
         if "local_receipt_seq" not in st.session_state:
             st.session_state.local_receipt_seq = 0
         st.session_state.local_receipt_seq += 1
         receipt_no = format_receipt_number(st.session_state.local_receipt_seq)
         return receipt_no, None
+
+
+def _render_success_card(
+    *,
+    receipt_no: str,
+    name: str,
+    amount: float,
+    payment_mode: str,
+    phone: str,
+    date_display: str,
+    notes: str,
+    sheet_ok: bool,
+) -> None:
+    """Polished post-submit summary card."""
+    icon = PAYMENT_ICONS.get(payment_mode, "💳")
+    safe_name = html.escape(name.strip())
+    safe_receipt = html.escape(receipt_no)
+    safe_phone = html.escape(phone)
+    safe_mode = html.escape(payment_mode)
+    safe_date = html.escape(date_display)
+    safe_amount = html.escape(format_currency(amount))
+
+    sheet_html = (
+        '<span class="vr-status-ok">✓ Logged to Google Sheets</span>'
+        if sheet_ok
+        else '<span class="vr-status-warn">⚠ Not logged to Sheets</span>'
+    )
+    notes_block = ""
+    if notes.strip():
+        notes_block = f"""
+        <div class="vr-field full">
+            <div class="lbl">Notes</div>
+            <div class="val">{html.escape(notes.strip())}</div>
+        </div>
+        """
+
+    st.markdown(
+        f"""
+        <div class="vr-success">
+            <div class="vr-success-badge">✓ Receipt issued</div>
+            <h3>Thank you, {safe_name}!</h3>
+            <div class="vr-receipt-id">{safe_receipt}</div>
+            <div class="vr-grid">
+                <div class="vr-field">
+                    <div class="lbl">Amount</div>
+                    <div class="val">{safe_amount}</div>
+                </div>
+                <div class="vr-field">
+                    <div class="lbl">Payment</div>
+                    <div class="val">{icon} {safe_mode}</div>
+                </div>
+                <div class="vr-field">
+                    <div class="lbl">WhatsApp</div>
+                    <div class="val">{safe_phone}</div>
+                </div>
+                <div class="vr-field">
+                    <div class="lbl">Date</div>
+                    <div class="val">{safe_date}</div>
+                </div>
+                <div class="vr-field full">
+                    <div class="lbl">Sync status</div>
+                    <div class="val">{sheet_html}</div>
+                </div>
+                <!-- {notes_block} --!>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _process_donation(
@@ -109,14 +521,12 @@ def _process_donation(
         "date": date_display,
     }
 
-    # 1) PDF
     try:
         pdf_path = generate_receipt(donation)
     except Exception as exc:
         st.error(f"Failed to generate PDF: {exc}")
         return
 
-    # 2) Google Sheets (skip if we already know Sheets is unavailable)
     sheet_ok = False
     if worksheet is not None:
         try:
@@ -131,60 +541,87 @@ def _process_donation(
         except Exception as exc:
             st.error(f"PDF created, but logging to Google Sheets failed: {exc}")
 
-    # 3) Success
-    st.success(f"Receipt generated successfully · **{receipt_no}**")
     st.balloons()
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Receipt No", receipt_no)
-        st.write(f"**Donor:** {name.strip()}")
-        st.write(f"**Amount:** {format_currency(amount)}")
-        st.write(f"**Mode:** {payment_mode}")
-    with col2:
-        st.write(f"**Date:** {date_display}")
-        st.write(f"**WhatsApp:** {phone}")
-        if notes.strip():
-            st.write(f"**Notes:** {notes.strip()}")
-        st.write(f"**Sheet logged:** {'Yes' if sheet_ok else 'No'}")
+    _render_success_card(
+        receipt_no=receipt_no,
+        name=name,
+        amount=amount,
+        payment_mode=payment_mode,
+        phone=phone,
+        date_display=date_display,
+        notes=notes,
+        sheet_ok=sheet_ok,
+    )
 
     pdf_bytes = Path(pdf_path).read_bytes()
     st.download_button(
-        label="Download PDF receipt",
+        label="⬇️  Download PDF receipt",
         data=pdf_bytes,
         file_name=Path(pdf_path).name,
         mime="application/pdf",
         type="primary",
+        use_container_width=True,
     )
 
 
 def main() -> None:
     """Render the donation form and handle submission."""
     _init_page()
+    _render_hero()
 
     st.markdown(
-        "Enter donor details below to issue an e-receipt. "
-        "Data is saved to Google Sheets and a PDF is generated for download."
+        """
+        <div class="vr-card-label">
+            <h2>New donation</h2>
+            <span>Required fields marked *</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     with st.form("donation_form", clear_on_submit=True):
-        name = st.text_input("Full Name *", placeholder="Donor's full name")
-        whatsapp = st.text_input(
-            "WhatsApp Number *",
-            placeholder="10-digit mobile number",
-            help="Used later for WhatsApp e-receipt delivery.",
+        name = st.text_input(
+            "Full name *",
+            placeholder="e.g. Rajesh Sharma",
+            help="Name as it should appear on the e-receipt.",
         )
-        amount = st.number_input(
-            "Amount (₹) *",
-            min_value=0.0,
-            step=1.0,
-            format="%.2f",
-            help="Donation amount in Indian Rupees.",
-        )
-        payment_mode = st.selectbox("Payment Mode *", options=PAYMENT_MODES)
-        notes = st.text_area("Notes (optional)", placeholder="Any additional remarks")
 
-        submitted = st.form_submit_button("Generate Receipt", type="primary", use_container_width=True)
+        col_phone, col_amount = st.columns(2)
+        with col_phone:
+            whatsapp = st.text_input(
+                "WhatsApp number *",
+                placeholder="10-digit mobile",
+                help="Used later for WhatsApp e-receipt delivery.",
+            )
+        with col_amount:
+            amount = st.number_input(
+                "Amount (₹) *",
+                min_value=0.0,
+                step=100.0,
+                format="%.2f",
+                help="Donation amount in Indian Rupees.",
+            )
+
+        payment_mode = st.radio(
+            "Payment mode *",
+            options=PAYMENT_MODES,
+            horizontal=True,
+            format_func=lambda m: f"{PAYMENT_ICONS.get(m, '')}  {m}",
+            help="How the donation was received.",
+        )
+
+        notes = st.text_area(
+            "Notes (optional)",
+            placeholder="Any remark for the record…",
+            height=80,
+        )
+
+        st.markdown("")  # small spacer before CTA
+        submitted = st.form_submit_button(
+            "✨  Generate e-receipt",
+            type="primary",
+            use_container_width=True,
+        )
 
     if submitted:
         errors = _validate(name, whatsapp, amount)
@@ -193,7 +630,7 @@ def main() -> None:
                 st.error(msg)
             return
 
-        with st.spinner("Generating receipt…"):
+        with st.spinner("Creating receipt & syncing to Sheets…"):
             _process_donation(
                 name=name,
                 whatsapp=whatsapp,
@@ -201,6 +638,11 @@ def main() -> None:
                 payment_mode=payment_mode,
                 notes=notes or "",
             )
+
+    st.markdown(
+        '<p class="vr-footnote">Navayuvak Mitra Mandal · E-Receipts</p>',
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
