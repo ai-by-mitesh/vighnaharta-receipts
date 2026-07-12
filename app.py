@@ -3,7 +3,11 @@ Main Streamlit application for Vighnaharta Receipts.
 
 Paperless donation e-receipt system for Dadar Cha Vighnaharta Ganpati Mandal.
 
-Flow on submit:
+Auth:
+- Login via auth.py + st.secrets ([credentials] / [passwords])
+- Session idle timeout (30 minutes)
+
+Donation flow (after login):
 1. Validate the form
 2. Fetch next receipt number from Google Sheets (fallback if offline)
 3. Generate PDF receipt
@@ -19,6 +23,11 @@ from pathlib import Path
 
 import streamlit as st
 
+from auth import (
+    ensure_active_session,
+    render_login_page,
+    render_session_bar,
+)
 from pdf_generator import DEFAULT_NOTES, generate_receipt
 from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
 from utils import format_currency, format_receipt_number, normalize_phone
@@ -339,6 +348,98 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     margin-top: 1.5rem;
 }
 
+/* Hide sidebar entirely — session controls live in the main form flow */
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"] {
+    display: none !important;
+}
+
+/* Hide Streamlit's built-in password show/hide control ("visibility" text) */
+div[data-testid="stTextInput"] button,
+div[data-testid="stTextInputRootElement"] button,
+div[data-baseweb="base-input"] button,
+/* Material icon / visibility adornment inside password inputs */
+[data-testid="stTextInput"] [data-testid="stBaseButton-secondary"],
+[data-testid="stTextInput"] [kind="secondary"] {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
+}
+
+/* Our emoji toggle sits in a column (not inside stTextInput) */
+div[data-testid="stHorizontalBlock"] > div:last-child button {
+    display: inline-flex !important;
+    visibility: visible !important;
+    width: 100% !important;
+    min-width: 2.7rem !important;
+    padding: 0.4rem !important;
+    border-radius: 12px !important;
+    min-height: 2.7rem;
+    border: 1px solid #eadfd3 !important;
+    background: #fffdfb !important;
+    font-size: 1.15rem !important;
+}
+
+/* —— Session bar (above donation form) —— */
+.vr-session-bar {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(232, 93, 4, 0.14);
+    border-radius: 16px;
+    padding: 0.85rem 1.05rem;
+    box-shadow: 0 8px 22px rgba(28, 28, 28, 0.04);
+    margin-bottom: 0;
+}
+
+/* Space between session bar block and hero / form below */
+.vr-session-gap {
+    height: 1.15rem;
+}
+
+.vr-session-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+    margin-bottom: 0.3rem;
+}
+
+.vr-session-user {
+    font-weight: 700;
+    color: #e85d04;
+    font-size: 0.98rem;
+}
+
+.vr-session-dot {
+    color: #c4b0a0;
+}
+
+.vr-session-meta {
+    font-size: 0.86rem;
+    color: #5c4f44;
+    font-weight: 500;
+}
+
+.vr-session-idle {
+    font-size: 0.8rem;
+    color: #8a7460;
+    line-height: 1.4;
+}
+
+.vr-session-idle strong {
+    color: #1c1c1c;
+    font-weight: 600;
+}
+
+.vr-session-idle-note {
+    color: #b09a88;
+    margin-left: 0.2rem;
+}
+
 @media (max-width: 640px) {
     .vr-hero h1 { font-size: 1.5rem; }
     .vr-grid { grid-template-columns: 1fr; }
@@ -375,6 +476,7 @@ def _render_hero() -> None:
 
 
 def _init_page() -> None:
+    """Must run before any other Streamlit body output."""
     st.set_page_config(
         page_title="Vighnaharta Receipts",
         page_icon="🙏",
@@ -570,9 +672,10 @@ def _process_donation(
     )
 
 
-def main() -> None:
-    """Render the donation form and handle submission."""
-    _init_page()
+def _render_donation_app() -> None:
+    """Main donation UI — only reached after a successful login."""
+    # Session bar first (user, login time, idle expiry, logout)
+    render_session_bar()
     _render_hero()
 
     st.markdown(
@@ -649,6 +752,22 @@ def main() -> None:
         '<p class="vr-footnote">Navayuvak Mitra Mandal · E-Receipts</p>',
         unsafe_allow_html=True,
     )
+
+
+def main() -> None:
+    """
+    App entry: login gate → donation form.
+
+    Unauthenticated (or expired) users only see the login page.
+    """
+    _init_page()
+
+    if not ensure_active_session():
+        # Session-expired flash (if any) shows on the login page
+        render_login_page()
+        return
+
+    _render_donation_app()
 
 
 if __name__ == "__main__":
