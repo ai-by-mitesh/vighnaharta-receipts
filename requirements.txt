@@ -6,3 +6,5 @@ google-auth-oauthlib
 python-dotenv
 requests
 uharfbuzz
+PyMuPDF
+pillow
