@@ -297,8 +297,8 @@ def render_login_page() -> None:
     st.markdown(
         """
         <div class="vr-hero">
-            <div class="vr-kicker">🙏 दादरचा विघ्नहर्ता</div>
-            <h1>Staff login</h1>
+            <div class="vr-kicker">दादरचा विघ्नहर्ता</div>
+            <h1>Navayuvak login</h1>
             <p>
                 Sign in to issue paperless donation e-receipts for
                 Dadar Cha Vighnaharta · Navayuvak Mitra Mandal.

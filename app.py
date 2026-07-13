@@ -38,7 +38,7 @@ PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
 
 # Success overlay lives in session_state (survives download rerun), then auto-hides.
-SUCCESS_CARD_SECONDS = 10
+SUCCESS_CARD_SECONDS = 5
 _SESSION_SUCCESS_KEY = "receipt_success"
 _SESSION_DOWNLOAD_PENDING_KEY = "receipt_success_download_pending"
 
@@ -337,6 +337,49 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     text-align: center;
 }
 
+/* Loading overlay (same shell as success; orange card) */
+.vr-loading {
+    width: min(360px, 100%);
+    border-radius: 20px;
+    border: 1px solid rgba(232, 93, 4, 0.18);
+    background: linear-gradient(180deg, #fff8f1 0%, #ffffff 55%);
+    padding: 1.6rem 1.5rem 1.45rem;
+    margin: 0;
+    text-align: center;
+    box-shadow:
+        0 28px 64px rgba(20, 18, 16, 0.28),
+        0 2px 0 rgba(255, 255, 255, 0.85) inset;
+}
+
+.vr-loading-spinner {
+    width: 2.4rem;
+    height: 2.4rem;
+    margin: 0 auto 1rem;
+    border-radius: 50%;
+    border: 3px solid #ffe0c2;
+    border-top-color: #e85d04;
+    animation: vr-spin 0.75s linear infinite;
+}
+
+.vr-loading h3 {
+    font-family: "Poppins", sans-serif !important;
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 0 0 0.35rem 0;
+    color: #1c1c1c;
+}
+
+.vr-loading p {
+    margin: 0;
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #8a7460;
+}
+
+@keyframes vr-spin {
+    to { transform: rotate(360deg); }
+}
+
 .vr-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -510,8 +553,7 @@ def _render_hero() -> None:
 def _init_page() -> None:
     """Must run before any other Streamlit body output."""
     st.set_page_config(
-        page_title="Vighnaharta Receipts",
-        page_icon="🙏",
+        page_title="दादरचा विघ्नहर्ता ई-पावती",
         layout="centered",
         initial_sidebar_state="collapsed",
     )
@@ -591,6 +633,22 @@ def _allocate_receipt_number() -> tuple[str, object | None]:
         st.session_state.local_receipt_seq += 1
         receipt_no = format_receipt_number(st.session_state.local_receipt_seq)
         return receipt_no, None
+
+
+def _render_loading_overlay() -> None:
+    """Fixed overlay while PDF + Sheets work runs (same shell as success)."""
+    st.markdown(
+        """
+        <div class="vr-success-overlay" role="status" aria-live="polite" aria-busy="true">
+            <div class="vr-loading">
+                <div class="vr-loading-spinner" aria-hidden="true"></div>
+                <h3>Creating e-receipt</h3>
+                <p>Generating PDF &amp; syncing to Sheets</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_success_card(
@@ -917,7 +975,11 @@ def _render_donation_app() -> None:
                 st.error(msg)
             return
 
-        with st.spinner("Creating receipt & syncing to Sheets…"):
+        # Overlay while work runs; clear before success card paints this same run.
+        loading_slot = st.empty()
+        with loading_slot:
+            _render_loading_overlay()
+        try:
             _process_donation(
                 name=name,
                 whatsapp=whatsapp,
@@ -925,6 +987,8 @@ def _render_donation_app() -> None:
                 payment_mode=payment_mode,
                 notes=notes or "",
             )
+        finally:
+            loading_slot.empty()
 
     # After form handling so a just-created receipt is shown this run,
     # and again on the download-button rerun (session_state).
