@@ -8,11 +8,19 @@ Streamlit app, PDF generator, and Google Sheets logger.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Receipt format: DCV-YYYY-NNNN  (e.g. DCV-2026-0001)
 RECEIPT_PREFIX = "DCV"
 RECEIPT_PATTERN = re.compile(rf"^{re.escape(RECEIPT_PREFIX)}-(\d{{4}})-(\d{{4}})$")
+
+# India Standard Time — Streamlit Cloud runs in UTC; use this for all "today" dates.
+IST = timezone(timedelta(hours=5, minutes=30), name="IST")
+
+
+def now_ist() -> datetime:
+    """Current datetime in India Standard Time (UTC+05:30)."""
+    return datetime.now(IST)
 
 
 def format_currency(amount: float | int, currency: str = "INR") -> str:
@@ -67,7 +75,7 @@ def format_receipt_number(sequence: int, year: int | None = None) -> str:
     if sequence < 1:
         raise ValueError("Receipt sequence must be >= 1")
 
-    year = year if year is not None else datetime.now().year
+    year = year if year is not None else now_ist().year
     return f"{RECEIPT_PREFIX}-{year}-{sequence:04d}"
 
 
@@ -102,7 +110,7 @@ def next_sequence_from_last(last_receipt_no: str | None, year: int | None = None
     Returns:
         Next sequence integer (not yet formatted).
     """
-    year = year if year is not None else datetime.now().year
+    year = year if year is not None else now_ist().year
     parsed = parse_receipt_number(last_receipt_no) if last_receipt_no else None
 
     if parsed is None:

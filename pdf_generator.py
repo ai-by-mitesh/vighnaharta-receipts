@@ -12,11 +12,12 @@ Layout:
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fpdf import FPDF
+
+from utils import now_ist
 
 # ── Brand palette ────────────────────────────────────────────────────────────
 ORANGE = (245, 140, 30)       # #F58C1E
@@ -606,7 +607,7 @@ def generate_receipt(
     amount = donation["amount"]
     payment_mode = str(donation.get("payment_mode", "")).strip() or "-"
     whatsapp = str(donation.get("whatsapp", "")).strip()
-    date_str = str(donation.get("date") or datetime.now().strftime("%d %B %Y"))
+    date_str = str(donation.get("date") or now_ist().strftime("%d %B %Y"))
     thank_you = str(donation.get("thank_you") or THANK_YOU)
     notes = str(donation.get("notes") or "").strip() or DEFAULT_NOTES
 

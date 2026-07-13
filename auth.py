@@ -23,6 +23,8 @@ from typing import Any
 
 import streamlit as st
 
+from utils import now_ist
+
 # Idle timeout (30 minutes of no user interaction)
 SESSION_TIMEOUT_MINUTES = 60
 # How often the background watchdog re-checks idle expiry without a button click
@@ -137,7 +139,7 @@ def validate_login(username: str, password: str) -> bool:
 
 def login_user(username: str) -> None:
     """Mark the session as authenticated; stamp login + activity times."""
-    now = datetime.now()
+    now = now_ist()
     st.session_state[_KEY_AUTH] = True
     st.session_state[_KEY_USER] = username.strip()
     st.session_state[_KEY_LOGIN_AT] = now
@@ -171,7 +173,7 @@ def touch_activity() -> None:
     user did something in the UI.
     """
     if st.session_state.get(_KEY_AUTH):
-        st.session_state[_KEY_ACTIVITY] = datetime.now()
+        st.session_state[_KEY_ACTIVITY] = now_ist()
 
 
 def is_authenticated() -> bool:
@@ -212,7 +214,7 @@ def is_session_expired() -> bool:
     last = last_activity_timestamp()
     if last is None:
         return True
-    return datetime.now() - last > timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    return now_ist() - last > timedelta(minutes=SESSION_TIMEOUT_MINUTES)
 
 
 def check_session_timeout() -> bool:

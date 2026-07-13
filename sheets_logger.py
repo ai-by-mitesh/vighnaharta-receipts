@@ -25,14 +25,13 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import gspread
 from google.oauth2.service_account import Credentials
 
-from utils import format_receipt_number, next_sequence_from_last
+from utils import format_receipt_number, next_sequence_from_last, now_ist
 
 # Columns written to the worksheet (header row expected in row 1)
 HEADERS = [
@@ -236,7 +235,7 @@ def get_next_receipt_number(
         Next receipt number, e.g. ``DCV-2026-0001``.
     """
     ws = worksheet if worksheet is not None else connect_to_sheet()
-    year = year if year is not None else datetime.now().year
+    year = year if year is not None else now_ist().year
     last = get_last_receipt_number(ws)
     sequence = next_sequence_from_last(last, year=year)
     return format_receipt_number(sequence, year=year)
@@ -263,7 +262,7 @@ def append_donation(
 
     date_str = str(
         donation.get("date")
-        or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        or now_ist().strftime("%Y-%m-%d %H:%M:%S")
     )
     row = [
         str(donation["receipt_no"]),

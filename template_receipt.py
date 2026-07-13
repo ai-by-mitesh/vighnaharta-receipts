@@ -11,7 +11,6 @@ This module does not allocate receipt numbers — callers pass a filled
 
 from __future__ import annotations
 
-from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from utils import amount_to_words
+from utils import amount_to_words, now_ist
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati.pdf"
@@ -73,12 +72,12 @@ def build_overlay_fields(donation: dict[str, Any]) -> dict[str, str]:
     Map a donation dict to template text fields.
 
     Expected keys: ``receipt_no``, ``donor_name``, ``amount``.
-    Date is always today's date as DD/MM/YYYY. Amount in words is computed.
+    Date is always today's date as DD/MM/YYYY in IST. Amount in words is computed.
     """
     amount = donation["amount"]
     return {
         "receipt_no": str(donation["receipt_no"]),
-        "date": datetime.now().strftime("%d/%m/%Y"),
+        "date": now_ist().strftime("%d/%m/%Y"),
         "donor_name": str(donation["donor_name"]).strip(),
         "amount_words": amount_to_words(amount),
         "amount_figures": _format_amount_figures(amount),

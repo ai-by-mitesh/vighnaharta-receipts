@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import html
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import streamlit as st
@@ -32,7 +32,7 @@ from auth import (
 from pdf_generator import DEFAULT_NOTES
 from receipt_service import generate_donation_receipt
 from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
-from utils import format_currency, format_receipt_number, normalize_phone
+from utils import format_currency, format_receipt_number, normalize_phone, now_ist
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
@@ -645,7 +645,7 @@ def _render_loading_overlay() -> None:
         <div class="vr-success-overlay" role="status" aria-live="polite" aria-busy="true">
             <div class="vr-loading">
                 <div class="vr-loading-spinner" aria-hidden="true"></div>
-                <h3>Creating e-receipt</h3>
+                <h3>Creating E-Pawati</h3>
                 <p>Generating PDF &amp; syncing to Sheets</p>
             </div>
         </div>
@@ -805,7 +805,7 @@ def _process_donation(
 ) -> None:
     """Generate receipt number, PDF, log to sheet; stash success UI in session."""
     receipt_no, worksheet = _allocate_receipt_number()
-    now = datetime.now()
+    now = now_ist()
     date_display = now.strftime("%d %B %Y")
     date_log = now.strftime("%Y-%m-%d %H:%M:%S")
     phone = normalize_phone(whatsapp)
