@@ -297,15 +297,15 @@ def render_login_page() -> None:
     st.markdown(
         """
         <div class="vr-hero">
-            <div class="vr-kicker">दादरचा विघ्नहर्ता</div>
+            <div class="vr-kicker">Dadarcha Vighnaharta</div>
             <h1>Navayuvak login</h1>
             <p>
-                Sign in to issue paperless donation e-receipts for
-                Dadar Cha Vighnaharta · Navayuvak Mitra Mandal.
+                Sign in to issue paperless donation pawati for
+                Dadarcha Vighnaharta · Navayuvak Mitra Mandal.
             </p>
             <div class="vr-hero-meta">
                 <span class="vr-chip">🔒 Secure access</span>
-                <span class="vr-chip">⏱ 30 min idle timeout</span>
+                <span class="vr-chip">⏱ 60 min idle timeout</span>
             </div>
         </div>
         """,

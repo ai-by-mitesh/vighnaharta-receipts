@@ -532,6 +532,7 @@ def _render_hero() -> None:
     st.markdown(
         """
         <div class="vr-hero">
+            <!--
             <div class="vr-kicker">दादरचा विघ्नहर्ता</div>
             <h1>Paperless Receipts</h1>
             <p>
@@ -544,6 +545,8 @@ def _render_hero() -> None:
                 <span class="vr-chip">📤 Google Sheets sync</span>
                 <span class="vr-chip">🧡 Mandal ready</span>
             </div>
+            --!>
+            <h1>E-Pawati</h1>
         </div>
         """,
         unsafe_allow_html=True,
