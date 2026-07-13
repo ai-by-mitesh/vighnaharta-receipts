@@ -8,3 +8,5 @@ requests
 uharfbuzz
 PyMuPDF
 pillow
+reportlab
+pypdf
