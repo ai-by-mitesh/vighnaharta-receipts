@@ -17,12 +17,17 @@ from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from utils import amount_to_words
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati.pdf"
+FONTS_DIR = PROJECT_ROOT / "assets" / "fonts"
+POPPINS_REGULAR = FONTS_DIR / "Poppins-Regular.ttf"
+POPPINS_BOLD = FONTS_DIR / "Poppins-Bold.ttf"
 
 # Paste values from find_pdf_coords.py: (x, y) top-left origin, PDF points.
 COORDS: dict[str, tuple[float, float]] = {
@@ -33,8 +38,27 @@ COORDS: dict[str, tuple[float, float]] = {
     "amount_figures": (508.5, 250.0),
 }
 
-FONT_NAME = "Helvetica"
+# Same typeface as the Streamlit UI (bundled under assets/fonts/).
+FONT_NAME = "Poppins"
 FONT_SIZE = 10
+# Amount-in-words is long; start smaller and shrink further to stay in the blank.
+AMOUNT_WORDS_FONT_SIZE = 8
+AMOUNT_WORDS_MIN_SIZE = 6.5
+# Right margin so text does not run into the decorative panel / page edge.
+AMOUNT_WORDS_RIGHT_PAD = 30
+
+
+def _ensure_poppins() -> str:
+    """Register Poppins once; fall back to Helvetica if the TTF is missing."""
+    if FONT_NAME in pdfmetrics.getRegisteredFontNames():
+        return FONT_NAME
+    if POPPINS_REGULAR.is_file():
+        pdfmetrics.registerFont(TTFont(FONT_NAME, str(POPPINS_REGULAR)))
+        if POPPINS_BOLD.is_file():
+            # Optional bold face (same family name + "-Bold" if ever needed).
+            pdfmetrics.registerFont(TTFont(f"{FONT_NAME}-Bold", str(POPPINS_BOLD)))
+        return FONT_NAME
+    return "Helvetica"
 
 
 def _format_amount_figures(amount: float | int) -> str:
@@ -61,20 +85,47 @@ def build_overlay_fields(donation: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _fit_font_size(
+    text: str,
+    font_name: str,
+    max_width: float,
+    max_size: float,
+    min_size: float,
+) -> float:
+    """Shrink font until ``text`` fits in ``max_width`` (or hit min_size)."""
+    size = max_size
+    while size > min_size and pdfmetrics.stringWidth(text, font_name, size) > max_width:
+        size -= 0.5
+    return size
+
+
 def _draw_overlay(
     page_width: float,
     page_height: float,
     fields: dict[str, str],
 ) -> BytesIO:
     """Build a single-page PDF containing only the stamped text."""
+    font_name = _ensure_poppins()
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_width, page_height))
-    c.setFont(FONT_NAME, FONT_SIZE)
 
     for key, (x, y_top) in COORDS.items():
+        text = fields[key]
+        if key == "amount_words":
+            max_width = max(40.0, page_width - x - AMOUNT_WORDS_RIGHT_PAD)
+            size = _fit_font_size(
+                text,
+                font_name,
+                max_width=max_width,
+                max_size=AMOUNT_WORDS_FONT_SIZE,
+                min_size=AMOUNT_WORDS_MIN_SIZE,
+            )
+        else:
+            size = FONT_SIZE
+        c.setFont(font_name, size)
         # Top-left click coords → ReportLab baseline Y.
-        y = page_height - y_top - FONT_SIZE * 0.8
-        c.drawString(x, y, fields[key])
+        y = page_height - y_top - size * 0.8
+        c.drawString(x, y, text)
 
     c.save()
     buf.seek(0)
@@ -119,3 +170,20 @@ def generate_template_receipt(
 
     safe_name = fields["receipt_no"].replace("/", "-")
     return buf.getvalue(), f"{safe_name}.pdf"
+
+
+if __name__ == "__main__":
+    # Smallest checks: Poppins registers, amount-in-words fits ≤ 1 lakh on the blank.
+    font = _ensure_poppins()
+    assert font == "Poppins", font
+    long = amount_to_words(73_373)  # longest wording at/under 1 lakh in practice
+    page_w = 618.34
+    x = COORDS["amount_words"][0]
+    max_w = page_w - x - AMOUNT_WORDS_RIGHT_PAD
+    size = _fit_font_size(
+        long, font, max_width=max_w, max_size=AMOUNT_WORDS_FONT_SIZE, min_size=AMOUNT_WORDS_MIN_SIZE
+    )
+    width = pdfmetrics.stringWidth(long, font, size)
+    assert width <= max_w + 0.5, (width, max_w, size, long)
+    assert size <= AMOUNT_WORDS_FONT_SIZE
+    print(f"ok: {font} size={size} width={width:.1f}/{max_w:.1f} text={long!r}")

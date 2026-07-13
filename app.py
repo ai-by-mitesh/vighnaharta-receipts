@@ -18,18 +18,16 @@ Donation flow (after login):
 from __future__ import annotations
 
 import html
-import math
 import time
 from datetime import datetime, timedelta
 from typing import Any
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from auth import (
     ensure_active_session,
     render_login_page,
-    render_session_bar,
+    # render_session_bar,  # re-enable with the session bar call below
 )
 from pdf_generator import DEFAULT_NOTES
 from receipt_service import generate_donation_receipt
@@ -39,8 +37,8 @@ from utils import format_currency, format_receipt_number, normalize_phone
 PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
 
-# Success card lives in session_state (survives download rerun), then auto-hides.
-SUCCESS_CARD_SECONDS = 5
+# Success overlay lives in session_state (survives download rerun), then auto-hides.
+SUCCESS_CARD_SECONDS = 10
 _SESSION_SUCCESS_KEY = "receipt_success"
 _SESSION_DOWNLOAD_PENDING_KEY = "receipt_success_download_pending"
 
@@ -274,15 +272,32 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     box-shadow: 0 14px 28px rgba(232, 93, 4, 0.34) !important;
 }
 
-/* Success receipt card */
+/* Success receipt — fixed overlay on top of everything */
+.vr-success-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(20, 18, 16, 0.48);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    /* No enter animation: fragment re-renders every 1s and would re-trigger it. */
+}
+
 .vr-success {
+    width: min(440px, 100%);
     border-radius: 20px;
     border: 1px solid rgba(34, 160, 90, 0.18);
     background:
         linear-gradient(180deg, #f3fff8 0%, #ffffff 55%);
     padding: 1.35rem 1.4rem 1.2rem;
-    margin: 0.5rem 0 1rem;
-    box-shadow: 0 12px 28px rgba(28, 28, 28, 0.05);
+    margin: 0;
+    box-shadow:
+        0 28px 64px rgba(20, 18, 16, 0.28),
+        0 2px 0 rgba(255, 255, 255, 0.85) inset;
 }
 
 .vr-success-badge {
@@ -312,6 +327,14 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     font-weight: 700;
     color: #e85d04;
     margin-bottom: 1rem;
+}
+
+.vr-success-foot {
+    margin-top: 0.95rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #6b7c70;
+    text-align: center;
 }
 
 .vr-grid {
@@ -495,12 +518,36 @@ def _init_page() -> None:
     _inject_styles()
 
 
+def _parse_amount(raw: str | float | int | None) -> float | None:
+    """
+    Parse a typed amount string (no number-input steppers).
+
+    Accepts ``501``, ``501.50``, ``1,000``. Returns None if empty/invalid.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw).strip().replace(",", "").replace("₹", "").replace("Rs.", "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def _validate(
     name: str,
     whatsapp: str,
-    amount: float | None,
-) -> list[str]:
-    """Return a list of validation error messages (empty if OK)."""
+    amount_raw: str | float | int | None,
+) -> tuple[list[str], float | None]:
+    """
+    Validate form fields.
+
+    Returns:
+        (errors, parsed_amount). parsed_amount is set only when amount is valid.
+    """
     errors: list[str] = []
     if not name.strip():
         errors.append("Full name is required.")
@@ -511,12 +558,15 @@ def _validate(
     elif len(digits) < 10:
         errors.append("WhatsApp number should have at least 10 digits.")
 
-    if amount is None:
+    amount = _parse_amount(amount_raw)
+    if amount_raw is None or (isinstance(amount_raw, str) and not str(amount_raw).strip()):
         errors.append("Amount is required.")
+    elif amount is None:
+        errors.append("Amount must be a valid number.")
     elif amount <= 0:
         errors.append("Amount must be greater than zero.")
 
-    return errors
+    return errors, amount
 
 
 def _allocate_receipt_number() -> tuple[str, object | None]:
@@ -553,8 +603,9 @@ def _render_success_card(
     date_display: str,
     notes: str,
     sheet_ok: bool,
+    seconds_left: int,
 ) -> None:
-    """Polished post-submit summary card."""
+    """Polished post-submit summary card (overlay)."""
     icon = PAYMENT_ICONS.get(payment_mode, "💳")
     safe_name = html.escape(name.strip())
     safe_receipt = html.escape(receipt_no)
@@ -562,6 +613,8 @@ def _render_success_card(
     safe_mode = html.escape(payment_mode)
     safe_date = html.escape(date_display)
     safe_amount = html.escape(format_currency(amount))
+    left = max(0, int(seconds_left))
+    close_label = "closes in 1s" if left == 1 else f"closes in {left}s"
 
     sheet_html = (
         '<span class="vr-status-ok">✓ Logged to Google Sheets</span>'
@@ -579,32 +632,35 @@ def _render_success_card(
 
     st.markdown(
         f"""
-        <div class="vr-success">
-            <div class="vr-success-badge">✓ Receipt issued</div>
-            <h3>Thank you, {safe_name}!</h3>
-            <div class="vr-receipt-id">{safe_receipt}</div>
-            <div class="vr-grid">
-                <div class="vr-field">
-                    <div class="lbl">Amount</div>
-                    <div class="val">{safe_amount}</div>
+        <div class="vr-success-overlay" role="status" aria-live="polite">
+            <div class="vr-success">
+                <div class="vr-success-badge">✓ Receipt issued</div>
+                <h3>Thank you, {safe_name}!</h3>
+                <div class="vr-receipt-id">{safe_receipt}</div>
+                <div class="vr-grid">
+                    <div class="vr-field">
+                        <div class="lbl">Amount</div>
+                        <div class="val">{safe_amount}</div>
+                    </div>
+                    <div class="vr-field">
+                        <div class="lbl">Payment</div>
+                        <div class="val">{icon} {safe_mode}</div>
+                    </div>
+                    <div class="vr-field">
+                        <div class="lbl">WhatsApp</div>
+                        <div class="val">{safe_phone}</div>
+                    </div>
+                    <div class="vr-field">
+                        <div class="lbl">Date</div>
+                        <div class="val">{safe_date}</div>
+                    </div>
+                    <div class="vr-field full">
+                        <div class="lbl">Sync status</div>
+                        <div class="val">{sheet_html}</div>
+                    </div>
+                    <!-- {notes_block} --!>
                 </div>
-                <div class="vr-field">
-                    <div class="lbl">Payment</div>
-                    <div class="val">{icon} {safe_mode}</div>
-                </div>
-                <div class="vr-field">
-                    <div class="lbl">WhatsApp</div>
-                    <div class="val">{safe_phone}</div>
-                </div>
-                <div class="vr-field">
-                    <div class="lbl">Date</div>
-                    <div class="val">{safe_date}</div>
-                </div>
-                <div class="vr-field full">
-                    <div class="lbl">Sync status</div>
-                    <div class="val">{sheet_html}</div>
-                </div>
-                <!-- {notes_block} --!>
+                <div class="vr-success-foot">Download started · {close_label}</div>
             </div>
         </div>
         """,
@@ -652,7 +708,8 @@ def _trigger_pdf_download(
     if not auto_click:
         return
 
-    components.html(
+    # st.iframe replaces deprecated st.components.v1.html (raw HTML string).
+    st.iframe(
         """
         <script>
         (function () {
@@ -674,8 +731,7 @@ def _trigger_pdf_download(
         })();
         </script>
         """,
-        height=0,
-        width=0,
+        height=1,
     )
 
 
@@ -739,7 +795,6 @@ def _process_donation(
         "pdf_bytes": pdf_bytes,
         "pdf_name": pdf_name,
         "shown_at": time.time(),
-        "balloons_shown": False,
     }
     st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = True
 
@@ -747,11 +802,10 @@ def _process_donation(
 @st.fragment(run_every=timedelta(seconds=1))
 def _render_receipt_success_if_any() -> None:
     """
-    Show the last success card, auto-download once, then hide after 5s.
+    Show the success receipt as a fixed overlay, auto-download once, hide after 10s.
 
-    Uses a fragment that ticks every second so the card can dismiss without a
-    full page freeze. Card data lives in session_state so the download-button
-    rerun does not flash it away early.
+    Fragment ticks every second so the popup can dismiss without freezing the
+    page. Data lives in session_state so the download-button rerun keeps it.
     """
     data: dict[str, Any] | None = st.session_state.get(_SESSION_SUCCESS_KEY)
     if not data:
@@ -759,16 +813,13 @@ def _render_receipt_success_if_any() -> None:
 
     shown_at = float(data.get("shown_at") or time.time())
     age = time.time() - shown_at
+    seconds_left = max(0, int(SUCCESS_CARD_SECONDS - age + 0.999))  # ceil remaining
 
     # Time is up — clear and stop rendering (next fragment tick stays empty).
     if age >= SUCCESS_CARD_SECONDS:
         st.session_state.pop(_SESSION_SUCCESS_KEY, None)
         st.session_state.pop(_SESSION_DOWNLOAD_PENDING_KEY, None)
         return
-
-    if not data.get("balloons_shown"):
-        st.balloons()
-        data["balloons_shown"] = True
 
     _render_success_card(
         receipt_no=str(data["receipt_no"]),
@@ -779,11 +830,8 @@ def _render_receipt_success_if_any() -> None:
         date_display=str(data["date_display"]),
         notes=str(data.get("notes") or ""),
         sheet_ok=bool(data.get("sheet_ok")),
+        seconds_left=seconds_left,
     )
-
-    pdf_name = str(data.get("pdf_name") or "receipt.pdf")
-    secs_left = max(1, math.ceil(SUCCESS_CARD_SECONDS - age))
-    st.caption(f"Downloading {pdf_name}…  ·  summary closes in {secs_left}s")
 
     pdf_bytes = data.get("pdf_bytes")
     if not isinstance(pdf_bytes, (bytes, bytearray)):
@@ -794,6 +842,7 @@ def _render_receipt_success_if_any() -> None:
     if pending:
         st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = False
 
+    pdf_name = str(data.get("pdf_name") or "receipt.pdf")
     _trigger_pdf_download(
         bytes(pdf_bytes),
         pdf_name,
@@ -805,8 +854,8 @@ def _render_receipt_success_if_any() -> None:
 
 def _render_donation_app() -> None:
     """Main donation UI — only reached after a successful login."""
-    # Session bar first (user, login time, idle expiry, logout)
-    render_session_bar()
+    # Session bar (user, login time, idle expiry, logout) — re-enable when needed:
+    # render_session_bar()
     _render_hero()
 
     st.markdown(
@@ -834,12 +883,10 @@ def _render_donation_app() -> None:
                 help="Used later for WhatsApp e-receipt delivery.",
             )
         with col_amount:
-            amount = st.number_input(
+            # text_input: real placeholder, full-width field, no +/- steppers
+            amount_raw = st.text_input(
                 "Amount (₹) *",
-                min_value=0.0,
-                step=100.0,
-                format="%.2f",
-                help="Donation amount in Indian Rupees.",
+                placeholder="e.g. 501",
             )
 
         payment_mode = st.radio(
@@ -864,7 +911,7 @@ def _render_donation_app() -> None:
         )
 
     if submitted:
-        errors = _validate(name, whatsapp, amount)
+        errors, amount = _validate(name, whatsapp, amount_raw)
         if errors:
             for msg in errors:
                 st.error(msg)
@@ -874,7 +921,7 @@ def _render_donation_app() -> None:
             _process_donation(
                 name=name,
                 whatsapp=whatsapp,
-                amount=float(amount),
+                amount=float(amount or 0),
                 payment_mode=payment_mode,
                 notes=notes or "",
             )
