@@ -619,7 +619,7 @@ def generate_receipt(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     safe_name = receipt_no.replace("/", "-")
-    pdf_path = out_dir / f"receipt_{safe_name}.pdf"
+    pdf_path = out_dir / f"{safe_name}.pdf"
 
     pdf = ReceiptPDF()
     pdf.set_title(f"Receipt {receipt_no}")

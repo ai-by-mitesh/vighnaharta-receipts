@@ -12,16 +12,19 @@ Donation flow (after login):
 2. Fetch next receipt number from Google Sheets (fallback if offline)
 3. Generate PDF receipt
 4. Log the donation row to Google Sheets
-5. Show success + download link
+5. Show success UI and auto-download the PDF in the browser
 """
 
 from __future__ import annotations
 
 import html
-from datetime import datetime
-from pathlib import Path
+import math
+import time
+from datetime import datetime, timedelta
+from typing import Any
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from auth import (
     ensure_active_session,
@@ -35,6 +38,11 @@ from utils import format_currency, format_receipt_number, normalize_phone
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
+
+# Success card lives in session_state (survives download rerun), then auto-hides.
+SUCCESS_CARD_SECONDS = 5
+_SESSION_SUCCESS_KEY = "receipt_success"
+_SESSION_DOWNLOAD_PENDING_KEY = "receipt_success_download_pending"
 
 # Injected once per run — modern card UI without extra frontend deps.
 _CUSTOM_CSS = """
@@ -604,6 +612,73 @@ def _render_success_card(
     )
 
 
+def _trigger_pdf_download(
+    pdf_bytes: bytes,
+    filename: str,
+    *,
+    key: str,
+    auto_click: bool = True,
+) -> None:
+    """
+    Offer a PDF download (hidden button). Optionally auto-click once.
+
+    Streamlit's download button causes a script rerun; callers must keep the
+    success card in ``st.session_state`` so it survives that rerun.
+    """
+    st.markdown(
+        """
+        <style>
+        /* Off-screen so there is no visible download button */
+        div[data-testid="stDownloadButton"] {
+            position: fixed !important;
+            left: -10000px !important;
+            top: 0 !important;
+            width: 1px !important;
+            height: 1px !important;
+            opacity: 0 !important;
+            overflow: hidden !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.download_button(
+        label="Download PDF receipt",
+        data=pdf_bytes,
+        file_name=filename,
+        mime="application/pdf",
+        key=key,
+    )
+    if not auto_click:
+        return
+
+    components.html(
+        """
+        <script>
+        (function () {
+            const doc = window.parent.document;
+            function tryClick() {
+                const nodes = doc.querySelectorAll(
+                    'div[data-testid="stDownloadButton"] button'
+                );
+                if (!nodes.length) return false;
+                nodes[nodes.length - 1].click();
+                return true;
+            }
+            if (tryClick()) return;
+            let n = 0;
+            const id = setInterval(function () {
+                n += 1;
+                if (tryClick() || n > 40) clearInterval(id);
+            }, 100);
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def _process_donation(
     name: str,
     whatsapp: str,
@@ -611,13 +686,12 @@ def _process_donation(
     payment_mode: str,
     notes: str,
 ) -> None:
-    """Generate receipt number, PDF, log to sheet, and show success UI."""
+    """Generate receipt number, PDF, log to sheet; stash success UI in session."""
     receipt_no, worksheet = _allocate_receipt_number()
     now = datetime.now()
     date_display = now.strftime("%d %B %Y")
     date_log = now.strftime("%Y-%m-%d %H:%M:%S")
     phone = normalize_phone(whatsapp)
-    # Default note when the form field is left blank
     notes_final = notes.strip() or DEFAULT_NOTES
 
     donation = {
@@ -631,9 +705,9 @@ def _process_donation(
     }
 
     try:
-        # Backend selected via RECEIPT_METHOD env or st.secrets [receipt].method
-        # ("fpdf" default landscape | "template" e-pawati overlay).
-        pdf_path = generate_donation_receipt(donation)
+        # Backend: RECEIPT_METHOD env or st.secrets [receipt].method
+        # template → in-memory only; fpdf → also writes receipts/*.pdf
+        pdf_bytes, pdf_name = generate_donation_receipt(donation)
     except Exception as exc:
         st.error(f"Failed to generate PDF: {exc}")
         return
@@ -652,27 +726,81 @@ def _process_donation(
         except Exception as exc:
             st.error(f"PDF created, but logging to Google Sheets failed: {exc}")
 
-    st.balloons()
+    # Persist so the success card survives the download-button rerun.
+    st.session_state[_SESSION_SUCCESS_KEY] = {
+        "receipt_no": receipt_no,
+        "name": name.strip(),
+        "amount": amount,
+        "payment_mode": payment_mode,
+        "phone": phone,
+        "date_display": date_display,
+        "notes": notes_final,
+        "sheet_ok": sheet_ok,
+        "pdf_bytes": pdf_bytes,
+        "pdf_name": pdf_name,
+        "shown_at": time.time(),
+        "balloons_shown": False,
+    }
+    st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = True
+
+
+@st.fragment(run_every=timedelta(seconds=1))
+def _render_receipt_success_if_any() -> None:
+    """
+    Show the last success card, auto-download once, then hide after 5s.
+
+    Uses a fragment that ticks every second so the card can dismiss without a
+    full page freeze. Card data lives in session_state so the download-button
+    rerun does not flash it away early.
+    """
+    data: dict[str, Any] | None = st.session_state.get(_SESSION_SUCCESS_KEY)
+    if not data:
+        return
+
+    shown_at = float(data.get("shown_at") or time.time())
+    age = time.time() - shown_at
+
+    # Time is up — clear and stop rendering (next fragment tick stays empty).
+    if age >= SUCCESS_CARD_SECONDS:
+        st.session_state.pop(_SESSION_SUCCESS_KEY, None)
+        st.session_state.pop(_SESSION_DOWNLOAD_PENDING_KEY, None)
+        return
+
+    if not data.get("balloons_shown"):
+        st.balloons()
+        data["balloons_shown"] = True
+
     _render_success_card(
-        receipt_no=receipt_no,
-        name=name,
-        amount=amount,
-        payment_mode=payment_mode,
-        phone=phone,
-        date_display=date_display,
-        notes=notes_final,
-        sheet_ok=sheet_ok,
+        receipt_no=str(data["receipt_no"]),
+        name=str(data["name"]),
+        amount=float(data["amount"]),
+        payment_mode=str(data["payment_mode"]),
+        phone=str(data["phone"]),
+        date_display=str(data["date_display"]),
+        notes=str(data.get("notes") or ""),
+        sheet_ok=bool(data.get("sheet_ok")),
     )
 
-    pdf_bytes = Path(pdf_path).read_bytes()
-    st.download_button(
-        label="⬇️  Download PDF receipt",
-        data=pdf_bytes,
-        file_name=Path(pdf_path).name,
-        mime="application/pdf",
-        type="primary",
-        use_container_width=True,
+    pdf_name = str(data.get("pdf_name") or "receipt.pdf")
+    secs_left = max(1, math.ceil(SUCCESS_CARD_SECONDS - age))
+    st.caption(f"Downloading {pdf_name}…  ·  summary closes in {secs_left}s")
+
+    pdf_bytes = data.get("pdf_bytes")
+    if not isinstance(pdf_bytes, (bytes, bytearray)):
+        return
+
+    pending = bool(st.session_state.get(_SESSION_DOWNLOAD_PENDING_KEY))
+    # Mark before auto-click so the rerun does not fire a second download loop.
+    if pending:
+        st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = False
+
+    _trigger_pdf_download(
+        bytes(pdf_bytes),
+        pdf_name,
+        key=f"auto_dl_{data['receipt_no']}",
+        auto_click=pending,
     )
+
 
 
 def _render_donation_app() -> None:
@@ -750,6 +878,10 @@ def _render_donation_app() -> None:
                 payment_mode=payment_mode,
                 notes=notes or "",
             )
+
+    # After form handling so a just-created receipt is shown this run,
+    # and again on the download-button rerun (session_state).
+    _render_receipt_success_if_any()
 
     st.markdown(
         '<p class="vr-footnote">Navayuvak Mitra Mandal · E-Receipts</p>',

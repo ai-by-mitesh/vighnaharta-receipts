@@ -23,7 +23,6 @@ from utils import amount_to_words
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati.pdf"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "receipts"
 
 # Paste values from find_pdf_coords.py: (x, y) top-left origin, PDF points.
 COORDS: dict[str, tuple[float, float]] = {
@@ -84,19 +83,20 @@ def _draw_overlay(
 
 def generate_template_receipt(
     donation: dict[str, Any],
-    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
     template_path: str | Path | None = None,
-) -> Path:
+) -> tuple[bytes, str]:
     """
-    Stamp donation fields onto the e-pawati template and write a PDF.
+    Stamp donation fields onto the e-pawati template (in memory only).
+
+    Unlike the fpdf landscape generator, this never writes a file under
+    ``receipts/`` — the browser download is the only copy.
 
     Args:
         donation: Must include receipt_no, donor_name, amount.
-        output_dir: Directory for the finished PDF.
         template_path: Optional override for the background PDF.
 
     Returns:
-        Path to the written receipt PDF.
+        ``(pdf_bytes, filename)`` e.g. ``(..., "DCV-2026-0001.pdf")``.
     """
     template = Path(template_path) if template_path else TEMPLATE_PDF
     if not template.is_file():
@@ -112,14 +112,10 @@ def generate_template_receipt(
     overlay = PdfReader(_draw_overlay(page_width, page_height, fields))
     page.merge_page(overlay.pages[0])
 
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = fields["receipt_no"].replace("/", "-")
-    out_path = out_dir / f"receipt_{safe_name}.pdf"
-
+    buf = BytesIO()
     writer = PdfWriter()
     writer.add_page(page)
-    with out_path.open("wb") as f:
-        writer.write(f)
+    writer.write(buf)
 
-    return out_path
+    safe_name = fields["receipt_no"].replace("/", "-")
+    return buf.getvalue(), f"{safe_name}.pdf"

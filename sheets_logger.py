@@ -16,6 +16,9 @@ Credentials & sheet config live in ``.streamlit/secrets.toml``::
     private_key = \"\"\"...\"\"\"
     client_email = "..."
     ...
+
+Alternatively, place a ``service_account.json`` key file next to this module
+(or set ``GOOGLE_APPLICATION_CREDENTIALS`` to its path).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import gspread
@@ -122,26 +126,42 @@ def _resolve_spreadsheet_config(
 
 def _build_credentials() -> Credentials:
     """
-    Build Google service-account credentials from Streamlit secrets.
+    Build Google service-account credentials.
 
-    Reads ``st.secrets['gcp_service_account']`` (from ``.streamlit/secrets.toml``
-    locally, or Streamlit Cloud secrets in production).
+    Resolution order:
+      1. ``st.secrets['gcp_service_account']`` (local secrets.toml or Streamlit Cloud)
+      2. Path in ``GOOGLE_APPLICATION_CREDENTIALS``
+      3. ``service_account.json`` next to this module (local fallback)
     """
     secrets = _try_streamlit_secrets() or {}
     sa_info = _as_dict(secrets.get("gcp_service_account"))
 
-    if not sa_info:
-        raise ValueError(
-            "Google service account is not configured. "
-            "Add a [gcp_service_account] section to .streamlit/secrets.toml "
-            "(fields from the service account JSON key)."
-        )
+    if sa_info:
+        # private_key in TOML multiline strings may keep literal "\\n"
+        if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
+            sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n").strip() + "\n"
+        return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
 
-    # private_key in TOML multiline strings may keep a leading newline
-    if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
-        sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n").strip() + "\n"
+    candidates: list[Path] = []
+    env_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path(__file__).resolve().parent / "service_account.json")
 
-    return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+    for path in candidates:
+        if path.is_file():
+            return Credentials.from_service_account_file(str(path), scopes=SCOPES)
+
+    raise ValueError(
+        "Google service account is not configured. "
+        "Add a [gcp_service_account] section to .streamlit/secrets.toml, "
+        "or provide service_account.json / GOOGLE_APPLICATION_CREDENTIALS."
+    )
+
+
+def get_google_credentials() -> Credentials:
+    """Public helper for Google API auth (Sheets / related)."""
+    return _build_credentials()
 
 
 def connect_to_sheet(

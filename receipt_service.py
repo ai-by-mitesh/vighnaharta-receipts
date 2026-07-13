@@ -8,7 +8,9 @@ Toggle via (first match wins):
 
 Accepted values:
   - ``fpdf`` / ``generated`` / ``legacy``  → pdf_generator.generate_receipt
+    (still writes a local file under receipts/)
   - ``template`` / ``overlay`` / ``e-pawati`` → template_receipt.generate_template_receipt
+    (in-memory only; browser download is the only copy)
 """
 
 from __future__ import annotations
@@ -66,18 +68,29 @@ def get_receipt_method() -> str:
 def generate_donation_receipt(
     donation: dict[str, Any],
     output_dir: str | Path | None = None,
-) -> Path:
+) -> tuple[bytes, str]:
     """
     Generate a receipt PDF using the configured method.
 
     Same ``donation`` contract as ``pdf_generator.generate_receipt``:
     receipt_no, donor_name, amount, plus optional payment_mode/date/notes/etc.
+
+    Returns:
+        ``(pdf_bytes, filename)`` for browser download.
+
+        - **template**: bytes built in memory; no file under ``receipts/``.
+        - **fpdf**: file still written under ``receipts/``; bytes are read back
+          so the download path is the same for both methods.
     """
     method = get_receipt_method()
+
+    if method == METHOD_TEMPLATE:
+        # In-memory only — never touch the receipts/ folder.
+        return generate_template_receipt(donation)
+
+    # Legacy fpdf landscape path still saves locally.
     kwargs: dict[str, Any] = {}
     if output_dir is not None:
         kwargs["output_dir"] = output_dir
-
-    if method == METHOD_TEMPLATE:
-        return generate_template_receipt(donation, **kwargs)
-    return generate_receipt(donation, **kwargs)
+    pdf_path = Path(generate_receipt(donation, **kwargs))
+    return pdf_path.read_bytes(), pdf_path.name
