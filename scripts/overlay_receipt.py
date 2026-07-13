@@ -77,7 +77,7 @@ def main() -> None:
     overlay = PdfReader(_draw_overlay(page_width, page_height))
     page.merge_page(overlay.pages[0])
 
-    out_path = OUTPUT_DIR / f"receipt_{DATA['receipt_no']}.pdf"
+    out_path = OUTPUT_DIR / f"{DATA['receipt_no']}.pdf"
     writer = PdfWriter()
     writer.add_page(page)
     with out_path.open("wb") as f:

@@ -10,9 +10,9 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-# Receipt format: VIGH-YYYY-NNNN  (e.g. VIGH-2026-0001)
-RECEIPT_PREFIX = "VIGH"
-RECEIPT_PATTERN = re.compile(r"^VIGH-(\d{4})-(\d{4})$")
+# Receipt format: DCV-YYYY-NNNN  (e.g. DCV-2026-0001)
+RECEIPT_PREFIX = "DCV"
+RECEIPT_PATTERN = re.compile(rf"^{re.escape(RECEIPT_PREFIX)}-(\d{{4}})-(\d{{4}})$")
 
 
 def format_currency(amount: float | int, currency: str = "INR") -> str:
@@ -48,7 +48,7 @@ def normalize_phone(phone: str) -> str:
 
 def format_receipt_number(sequence: int, year: int | None = None) -> str:
     """
-    Build a receipt number in the form VIGH-YYYY-NNNN.
+    Build a receipt number in the form DCV-YYYY-NNNN.
 
     The sequence is zero-padded to 4 digits. Year defaults to the current
     calendar year. Incrementing against existing sheet rows is handled by
@@ -59,7 +59,7 @@ def format_receipt_number(sequence: int, year: int | None = None) -> str:
         year: Calendar year; defaults to today.
 
     Returns:
-        Receipt number string, e.g. ``VIGH-2026-0001``.
+        Receipt number string, e.g. ``DCV-2026-0001``.
 
     Raises:
         ValueError: If sequence is less than 1.
@@ -76,7 +76,7 @@ def parse_receipt_number(receipt_no: str) -> tuple[int, int] | None:
     Parse a receipt number into (year, sequence).
 
     Args:
-        receipt_no: Value like ``VIGH-2026-0001``.
+        receipt_no: Value like ``DCV-2026-0001``.
 
     Returns:
         ``(year, sequence)`` or ``None`` if the format is invalid.
@@ -112,3 +112,109 @@ def next_sequence_from_last(last_receipt_no: str | None, year: int | None = None
     if last_year != year:
         return 1
     return last_seq + 1
+
+
+# ── Amount in words (English, Indian numbering) ──────────────────────────────
+_ONES = (
+    "",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine",
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
+)
+_TENS = (
+    "",
+    "",
+    "Twenty",
+    "Thirty",
+    "Forty",
+    "Fifty",
+    "Sixty",
+    "Seventy",
+    "Eighty",
+    "Ninety",
+)
+
+
+def _words_under_100(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    if ones == 0:
+        return _TENS[tens]
+    return f"{_TENS[tens]} {_ONES[ones]}"
+
+
+def _words_under_1000(n: int) -> str:
+    if n < 100:
+        return _words_under_100(n)
+    hundreds, rest = divmod(n, 100)
+    head = f"{_ONES[hundreds]} Hundred"
+    if rest == 0:
+        return head
+    return f"{head} {_words_under_100(rest)}"
+
+
+def amount_to_words(amount: float | int) -> str:
+    """
+    Convert a rupee amount to English words (Indian scale).
+
+    Examples:
+        501 → ``Five Hundred One Only``
+        25000 → ``Twenty Five Thousand Only``
+        1_50_000 → ``One Lakh Fifty Thousand Only``
+
+    Whole rupees only (fractional paise are rounded to the nearest rupee).
+    Supports 0 through 999 crore (exclusive).
+    """
+    if amount is None:
+        raise ValueError("Amount is required")
+
+    n = int(round(float(amount)))
+    if n < 0:
+        raise ValueError("Amount must be non-negative")
+    if n == 0:
+        return "Zero Only"
+    if n >= 100_00_00_000:  # 100 crore
+        raise ValueError("Amount too large for amount-in-words conversion")
+
+    crore, n = divmod(n, 1_00_00_000)
+    lakh, n = divmod(n, 1_00_000)
+    thousand, rest = divmod(n, 1_000)
+
+    parts: list[str] = []
+    if crore:
+        parts.append(f"{_words_under_100(crore)} Crore")
+    if lakh:
+        parts.append(f"{_words_under_100(lakh)} Lakh")
+    if thousand:
+        parts.append(f"{_words_under_1000(thousand)} Thousand")
+    if rest:
+        parts.append(_words_under_1000(rest))
+
+    return f"{' '.join(parts)} Only"
+
+
+if __name__ == "__main__":
+    # Smallest checks that fail if amount-in-words logic breaks.
+    assert amount_to_words(0) == "Zero Only"
+    assert amount_to_words(501) == "Five Hundred One Only"
+    assert amount_to_words(25_000) == "Twenty Five Thousand Only"
+    assert amount_to_words(1_50_000) == "One Lakh Fifty Thousand Only"
+    assert format_receipt_number(1, 2026) == "DCV-2026-0001"
+    print("utils self-check OK")
