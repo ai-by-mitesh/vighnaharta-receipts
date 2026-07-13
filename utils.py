@@ -19,8 +19,21 @@ IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 
 
 def now_ist() -> datetime:
-    """Current datetime in India Standard Time (UTC+05:30)."""
-    return datetime.now(IST)
+    """
+    Current India Standard Time as a *naive* datetime (IST wall clock).
+
+    Naive on purpose: Streamlit session_state may still hold older naive
+    stamps from before the IST change; mixing those with tz-aware values
+    raises TypeError on subtract. strftime still shows the correct IST date.
+    """
+    return datetime.now(IST).replace(tzinfo=None)
+
+
+def as_naive_ist(dt: datetime) -> datetime:
+    """Normalize a datetime for IST comparisons (strip/convert tzinfo)."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(IST).replace(tzinfo=None)
 
 
 def format_currency(amount: float | int, currency: str = "INR") -> str:

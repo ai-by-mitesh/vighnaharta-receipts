@@ -23,7 +23,7 @@ from typing import Any
 
 import streamlit as st
 
-from utils import now_ist
+from utils import as_naive_ist, now_ist
 
 # Idle timeout (30 minutes of no user interaction)
 SESSION_TIMEOUT_MINUTES = 60
@@ -204,7 +204,7 @@ def session_expires_at() -> datetime | None:
     last = last_activity_timestamp()
     if last is None:
         return None
-    return last + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    return as_naive_ist(last) + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
 
 
 def is_session_expired() -> bool:
@@ -214,7 +214,8 @@ def is_session_expired() -> bool:
     last = last_activity_timestamp()
     if last is None:
         return True
-    return now_ist() - last > timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    # Normalize so pre-IST (naive) and any aware stamps both compare cleanly.
+    return now_ist() - as_naive_ist(last) > timedelta(minutes=SESSION_TIMEOUT_MINUTES)
 
 
 def check_session_timeout() -> bool:
