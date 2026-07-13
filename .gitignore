@@ -30,7 +30,7 @@ service_account.json
 .streamlit/secrets.toml
 
 # Generated receipts & logo cache
-*.pdf
+receipts/*.pdf
 .cache/
 
 # OS

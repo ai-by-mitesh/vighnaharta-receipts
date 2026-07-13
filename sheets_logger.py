@@ -206,14 +206,14 @@ def get_next_receipt_number(
     """
     Compute the next receipt number by inspecting the last sheet row.
 
-    Format: ``VIGH-YYYY-NNNN`` (resets sequence each calendar year).
+    Format: ``DCV-YYYY-NNNN`` (resets sequence each calendar year).
 
     Args:
         worksheet: Open worksheet; opens a new connection if omitted.
         year: Override year (defaults to current).
 
     Returns:
-        Next receipt number, e.g. ``VIGH-2026-0001``.
+        Next receipt number, e.g. ``DCV-2026-0001``.
     """
     ws = worksheet if worksheet is not None else connect_to_sheet()
     year = year if year is not None else datetime.now().year

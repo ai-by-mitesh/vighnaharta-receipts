@@ -28,7 +28,8 @@ from auth import (
     render_login_page,
     render_session_bar,
 )
-from pdf_generator import DEFAULT_NOTES, generate_receipt
+from pdf_generator import DEFAULT_NOTES
+from receipt_service import generate_donation_receipt
 from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
 from utils import format_currency, format_receipt_number, normalize_phone
 
@@ -630,7 +631,9 @@ def _process_donation(
     }
 
     try:
-        pdf_path = generate_receipt(donation)
+        # Backend selected via RECEIPT_METHOD env or st.secrets [receipt].method
+        # ("fpdf" default landscape | "template" e-pawati overlay).
+        pdf_path = generate_donation_receipt(donation)
     except Exception as exc:
         st.error(f"Failed to generate PDF: {exc}")
         return
