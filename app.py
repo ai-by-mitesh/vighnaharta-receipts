@@ -919,15 +919,16 @@ def _render_donation_app() -> None:
     # render_session_bar()
     _render_hero()
 
-    st.markdown(
-        """
-        <div class="vr-card-label">
-            <h2>New donation</h2>
-            <span>Required fields marked *</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Section header above the form — cosmetic only; re-enable if useful:
+    # st.markdown(
+    #     """
+    #     <div class="vr-card-label">
+    #         <h2>New donation</h2>
+    #         <span>Required fields marked *</span>
+    #     </div>
+    #     """,
+    #     unsafe_allow_html=True,
+    # )
 
     with st.form("donation_form", clear_on_submit=True):
         name = st.text_input(
