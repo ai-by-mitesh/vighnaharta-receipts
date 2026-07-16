@@ -834,7 +834,17 @@ def _render_hero() -> None:
             type="tertiary",
             width="content",
         ):
-            _open_upi_qr_popup()
+            # Show loader first (same pattern as e-pawati generation), then build QR
+            loading_slot = st.empty()
+            with loading_slot:
+                _render_loading_overlay(
+                    title="Generating QR",
+                    subtitle="Fetching next pawati number",
+                )
+            try:
+                _open_upi_qr_popup()
+            finally:
+                loading_slot.empty()
 
 
 def _init_page() -> None:
@@ -922,15 +932,20 @@ def _allocate_receipt_number() -> tuple[str, object | None]:
         return receipt_no, None
 
 
-def _render_loading_overlay() -> None:
-    """Fixed overlay while PDF + Sheets work runs (same shell as success)."""
+def _render_loading_overlay(
+    title: str = "Creating E-Pawati",
+    subtitle: str = "Generating PDF & syncing to Sheets",
+) -> None:
+    """Fixed overlay while slow work runs (same shell as success / QR popup)."""
+    safe_title = html.escape(title)
+    safe_sub = html.escape(subtitle)
     st.markdown(
-        """
+        f"""
         <div class="vr-success-overlay" role="status" aria-live="polite" aria-busy="true">
             <div class="vr-loading">
                 <div class="vr-loading-spinner" aria-hidden="true"></div>
-                <h3 style="text-align:center;margin:0 0 0.35rem 0;width:100%;transform:translateX(12px);">Creating E-Pawati</h3>
-                <p style="text-align:center;margin:0;width:100%;">Generating PDF &amp; syncing to Sheets</p>
+                <h3 style="text-align:center;margin:0 0 0.35rem 0;width:100%;transform:translateX(12px);">{safe_title}</h3>
+                <p style="text-align:center;margin:0;width:100%;">{safe_sub}</p>
             </div>
         </div>
         """,
