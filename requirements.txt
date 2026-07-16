@@ -8,5 +8,6 @@ requests
 uharfbuzz
 PyMuPDF
 pillow
+qrcode
 reportlab
 pypdf

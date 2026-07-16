@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv",
     "requests",
     "pillow",
+    "qrcode",
     "uharfbuzz>=0.55.0",
     "pymupdf>=1.28.0",
     "reportlab>=5.0.0",
