@@ -17,6 +17,7 @@ Donation flow (after login):
 
 from __future__ import annotations
 
+import base64
 import html
 import time
 from datetime import timedelta
@@ -32,6 +33,7 @@ from auth import (
 from pdf_generator import DEFAULT_NOTES
 from receipt_service import generate_donation_receipt
 from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
+from upi_qr import generate_upi_qr_for_note
 from utils import format_currency, format_receipt_number, normalize_phone, now_ist
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
@@ -41,6 +43,21 @@ PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
 SUCCESS_CARD_SECONDS = 5
 _SESSION_SUCCESS_KEY = "receipt_success"
 _SESSION_DOWNLOAD_PENDING_KEY = "receipt_success_download_pending"
+_SESSION_UPI_QR_KEY = "upi_qr_popup"
+
+# QR icon as CSS data-URI (white stroke) painted on the Streamlit button
+_HERO_QR_ICON_CSS = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+    "stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
+    "%3Crect x='3' y='3' width='7' height='7' rx='1'/%3E"
+    "%3Crect x='14' y='3' width='7' height='7' rx='1'/%3E"
+    "%3Crect x='3' y='14' width='7' height='7' rx='1'/%3E"
+    "%3Cpath d='M14 14h.01'/%3E%3Cpath d='M17 14h.01'/%3E%3Cpath d='M14 17h.01'/%3E"
+    "%3Cpath d='M17 17h.01'/%3E%3Cpath d='M14 20h.01'/%3E%3Cpath d='M17 20h.01'/%3E"
+    "%3Cpath d='M20 14h.01'/%3E%3Cpath d='M20 17h.01'/%3E%3Cpath d='M20 20h.01'/%3E"
+    "%3C/svg%3E"
+)
 
 # Injected once per run — modern card UI without extra frontend deps.
 _CUSTOM_CSS = """
@@ -74,7 +91,7 @@ header { visibility: hidden; }
     max-width: 760px;
 }
 
-/* —— Hero —— */
+/* —— Hero (login + form: same main-branch card) —— */
 .vr-hero {
     position: relative;
     overflow: hidden;
@@ -88,6 +105,180 @@ header { visibility: hidden; }
         0 2px 0 rgba(255, 255, 255, 0.25) inset;
 }
 
+/*
+ * Form page: wrap pure .vr-hero + st.button so height matches main,
+ * and pin the QR control to the right edge (not a left-shifted column).
+ */
+div.st-key-form_hero_wrap {
+    position: relative !important;
+    margin-bottom: 1.25rem;
+}
+
+div.st-key-form_hero_wrap .vr-hero {
+    margin-bottom: 0;
+    /* room on the right so title never sits under the QR tile */
+    padding-right: 5.25rem;
+}
+
+/* Pin QR button to the right-middle of the hero card (slightly below center) */
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr {
+    position: absolute !important;
+    right: 1.35rem;
+    top: calc(50% + 5px);
+    transform: translateY(-50%);
+    z-index: 5;
+    width: auto !important;
+    margin: 0 !important;
+    height: auto !important;
+}
+
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr [data-testid="stTooltipHoverTarget"],
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr .stButton,
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr button {
+    width: 3.25rem !important;
+    height: 3.25rem !important;
+    min-width: 3.25rem !important;
+    min-height: 3.25rem !important;
+}
+
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr button {
+    padding: 0 !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255, 255, 255, 0.45) !important;
+    background:
+        url("__HERO_QR_ICON__") center / 1.95rem 1.95rem no-repeat,
+        rgba(255, 255, 255, 0.22) !important;
+    box-shadow:
+        0 8px 18px rgba(0, 0, 0, 0.12),
+        0 1px 0 rgba(255, 255, 255, 0.30) inset !important;
+    color: transparent !important;
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr button:hover {
+    background:
+        url("__HERO_QR_ICON__") center / 1.95rem 1.95rem no-repeat,
+        rgba(255, 255, 255, 0.34) !important;
+    box-shadow:
+        0 12px 22px rgba(0, 0, 0, 0.16),
+        0 1px 0 rgba(255, 255, 255, 0.34) inset !important;
+}
+
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr button p,
+div.st-key-form_hero_wrap div.st-key-hero_upi_qr button span {
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+/*
+ * UPI QR popup — same fixed full-screen pattern as receipt success.
+ * Backdrop is a full-screen Streamlit button (click outside closes).
+ * Card sits above it; no X control.
+ */
+div.st-key-upi_qr_dismiss {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483000 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+div.st-key-upi_qr_dismiss [data-testid="stTooltipHoverTarget"],
+div.st-key-upi_qr_dismiss .stButton {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+div.st-key-upi_qr_dismiss button {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    min-width: 100vw !important;
+    min-height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: rgba(20, 18, 16, 0.48) !important;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    box-shadow: none !important;
+    color: transparent !important;
+    cursor: default !important;
+}
+
+div.st-key-upi_qr_dismiss button p,
+div.st-key-upi_qr_dismiss button span {
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+.vr-qr-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: transparent;
+    pointer-events: none; /* clicks outside the card fall through to the backdrop button */
+}
+
+.vr-qr-card {
+    pointer-events: auto;
+    width: min(300px, 100%);
+    border-radius: 20px;
+    border: 1px solid rgba(232, 93, 4, 0.14);
+    background: linear-gradient(180deg, #fff8f1 0%, #ffffff 55%);
+    padding: 1.4rem 1.35rem 1.25rem;
+    margin: 0;
+    text-align: center;
+    box-shadow:
+        0 28px 64px rgba(20, 18, 16, 0.28),
+        0 2px 0 rgba(255, 255, 255, 0.85) inset;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.vr-qr-title {
+    font-family: "Poppins", sans-serif !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    color: #1c1c1c !important;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.15rem 0 !important;
+    text-align: center !important;
+}
+
+.vr-qr-card img {
+    display: block;
+    width: 200px;
+    height: 200px;
+    margin: 0 auto;
+    border-radius: 12px;
+    border: 1px solid rgba(232, 93, 4, 0.10);
+    background: #fff;
+}
+
+.vr-qr-note {
+    font-family: "Poppins", sans-serif !important;
+    font-size: 1.05rem !important;
+    font-weight: 700 !important;
+    color: #e85d04 !important;
+    letter-spacing: 0.02em;
+    text-align: center !important;
+    margin: 0 !important;
+    word-break: break-all;
+}
+
 .vr-hero::after {
     content: "";
     position: absolute;
@@ -97,6 +288,7 @@ header { visibility: hidden; }
     height: 180px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.14);
+    pointer-events: none;
 }
 
 .vr-hero::before {
@@ -108,6 +300,7 @@ header { visibility: hidden; }
     height: 140px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.10);
+    pointer-events: none;
 }
 
 .vr-kicker {
@@ -344,8 +537,12 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     border: 1px solid rgba(232, 93, 4, 0.18);
     background: linear-gradient(180deg, #fff8f1 0%, #ffffff 55%);
     padding: 1.6rem 1.5rem 1.45rem;
-    margin: 0;
-    text-align: center;
+    margin: 0 auto;
+    text-align: center !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     box-shadow:
         0 28px 64px rgba(20, 18, 16, 0.28),
         0 2px 0 rgba(255, 255, 255, 0.85) inset;
@@ -359,21 +556,32 @@ div[data-testid="stForm"] .stButton > button[kind="primary"]:hover,
     border: 3px solid #ffe0c2;
     border-top-color: #e85d04;
     animation: vr-spin 0.75s linear infinite;
+    flex-shrink: 0;
 }
 
 .vr-loading h3 {
     font-family: "Poppins", sans-serif !important;
-    font-size: 1.15rem;
-    font-weight: 700;
-    margin: 0 0 0.35rem 0;
-    color: #1c1c1c;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    line-height: 1.3 !important;
+    margin: 0 0 0.35rem 0 !important;
+    padding: 0 !important;
+    color: #1c1c1c !important;
+    text-align: center !important;
+    width: 100%;
+    /* Optical nudge — title reads slightly left of the spinner otherwise */
+    transform: translateX(12px);
 }
 
 .vr-loading p {
-    margin: 0;
-    font-size: 0.88rem;
-    font-weight: 500;
-    color: #8a7460;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 0.88rem !important;
+    font-weight: 500 !important;
+    line-height: 1.4 !important;
+    color: #8a7460 !important;
+    text-align: center !important;
+    width: 100%;
 }
 
 @keyframes vr-spin {
@@ -446,8 +654,8 @@ div[data-baseweb="base-input"] button,
     overflow: hidden !important;
 }
 
-/* Our emoji toggle sits in a column (not inside stTextInput) */
-div[data-testid="stHorizontalBlock"] > div:last-child button {
+/* Login password emoji toggle only (not the form-hero QR tertiary button) */
+div[data-testid="stHorizontalBlock"] > div:last-child button[data-testid="stBaseButton-secondary"] {
     display: inline-flex !important;
     visibility: visible !important;
     width: 100% !important;
@@ -525,32 +733,108 @@ div[data-testid="stHorizontalBlock"] > div:last-child button {
 
 
 def _inject_styles() -> None:
-    st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
-
-
-def _render_hero() -> None:
     st.markdown(
-        """
-        <div class="vr-hero">
-            <!--
-            <div class="vr-kicker">दादरचा विघ्नहर्ता</div>
-            <h1>Paperless Receipts</h1>
-            <p>
-                Issue paperless donation e-receipts in seconds,
-                PDF ready to download, records saved for accounting automatically.
-            </p>
-            </br>
-            <div class="vr-hero-meta">
-                <span class="vr-chip">⚡ Instant PDF</span>
-                <span class="vr-chip">📤 Google Sheets sync</span>
-                <span class="vr-chip">🧡 Mandal ready</span>
+        _CUSTOM_CSS.replace("__HERO_QR_ICON__", _HERO_QR_ICON_CSS),
+        unsafe_allow_html=True,
+    )
+
+
+def _clear_upi_qr_popup() -> None:
+    st.session_state.pop(_SESSION_UPI_QR_KEY, None)
+
+
+def _peek_next_receipt_number() -> str:
+    """
+    Next receipt number for the UPI note (read-only peek).
+
+    Does not burn the offline local sequence counter.
+    """
+    try:
+        return get_next_receipt_number()
+    except Exception:
+        seq = int(st.session_state.get("local_receipt_seq", 0)) + 1
+        return format_receipt_number(seq)
+
+
+def _open_upi_qr_popup() -> None:
+    """Build QR from next sheet receipt number and stash for the overlay."""
+    try:
+        note = _peek_next_receipt_number()
+        png, _uri = generate_upi_qr_for_note(note)
+        st.session_state[_SESSION_UPI_QR_KEY] = {"note": note, "png": png}
+    except Exception as exc:
+        st.session_state.pop(_SESSION_UPI_QR_KEY, None)
+        st.error(f"Could not generate UPI QR ({exc}).")
+
+
+def _render_upi_qr_popup_if_any() -> None:
+    """
+    Center-screen QR overlay (same shell as receipt success).
+
+    No X button. Click the dimmed area outside the card to close.
+    """
+    payload = st.session_state.get(_SESSION_UPI_QR_KEY)
+    if not payload:
+        return
+
+    # Full-screen backdrop button under the card — click = dismiss
+    if st.button(
+        "Close",
+        key="upi_qr_dismiss",
+        help="Click outside the card to close",
+        type="tertiary",
+        width="stretch",
+    ):
+        _clear_upi_qr_popup()
+        st.rerun()
+
+    qr_b64 = base64.b64encode(bytes(payload["png"])).decode("ascii")
+    note_safe = html.escape(str(payload["note"]))
+    st.markdown(
+        f"""
+        <div class="vr-qr-overlay" role="dialog" aria-modal="true" aria-label="Scan to Pay">
+            <div class="vr-qr-card">
+                <p class="vr-qr-title">Scan to Pay</p>
+                <img src="data:image/png;base64,{qr_b64}" width="200" height="200" alt="UPI QR code" />
+                <p class="vr-qr-note">{note_safe}</p>
             </div>
-            --!>
-            <h1>E-Pawati</h1>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_hero() -> None:
+    """
+    Form hero: same pure HTML ``.vr-hero`` as main (correct height).
+
+    QR is a real ``st.button`` pinned to the right edge of the card via CSS
+    (no columns layout, no query-param navigation).
+    """
+    if "show_upi_qr" in st.query_params:
+        try:
+            del st.query_params["show_upi_qr"]
+        except Exception:
+            pass
+
+    with st.container(key="form_hero_wrap"):
+        # Exact main-branch markup / padding / h1 margins → original height
+        st.markdown(
+            """
+            <div class="vr-hero">
+                <h1>E-Pawati</h1>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "QR",
+            key="hero_upi_qr",
+            help="Generate UPI payment QR",
+            type="tertiary",
+            width="content",
+        ):
+            _open_upi_qr_popup()
 
 
 def _init_page() -> None:
@@ -628,7 +912,7 @@ def _allocate_receipt_number() -> tuple[str, object | None]:
         return receipt_no, worksheet
     except Exception as exc:
         st.warning(
-            f"Could not reach Google Sheets for receipt numbering ({exc}). "
+            f"Could not reach Google Sheets for pawati numbering ({exc}). "
             "Using a temporary local number — row will not be logged until Sheets is configured."
         )
         if "local_receipt_seq" not in st.session_state:
@@ -645,8 +929,8 @@ def _render_loading_overlay() -> None:
         <div class="vr-success-overlay" role="status" aria-live="polite" aria-busy="true">
             <div class="vr-loading">
                 <div class="vr-loading-spinner" aria-hidden="true"></div>
-                <h3>Creating E-Pawati</h3>
-                <p>Generating PDF &amp; syncing to Sheets</p>
+                <h3 style="text-align:center;margin:0 0 0.35rem 0;width:100%;transform:translateX(12px);">Creating E-Pawati</h3>
+                <p style="text-align:center;margin:0;width:100%;">Generating PDF &amp; syncing to Sheets</p>
             </div>
         </div>
         """,
@@ -695,7 +979,7 @@ def _render_success_card(
         f"""
         <div class="vr-success-overlay" role="status" aria-live="polite">
             <div class="vr-success">
-                <div class="vr-success-badge">✓ Receipt issued</div>
+                <div class="vr-success-badge">✓ Pawati issued</div>
                 <h3>Thank you, {safe_name}!</h3>
                 <div class="vr-receipt-id">{safe_receipt}</div>
                 <div class="vr-grid">
@@ -760,7 +1044,7 @@ def _trigger_pdf_download(
         unsafe_allow_html=True,
     )
     st.download_button(
-        label="Download PDF receipt",
+        label="Download PDF pawati",
         data=pdf_bytes,
         file_name=filename,
         mime="application/pdf",
@@ -903,7 +1187,7 @@ def _render_receipt_success_if_any() -> None:
     if pending:
         st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = False
 
-    pdf_name = str(data.get("pdf_name") or "receipt.pdf")
+    pdf_name = str(data.get("pdf_name") or "pawati.pdf")
     _trigger_pdf_download(
         bytes(pdf_bytes),
         pdf_name,
@@ -918,6 +1202,7 @@ def _render_donation_app() -> None:
     # Session bar (user, login time, idle expiry, logout) — re-enable when needed:
     # render_session_bar()
     _render_hero()
+    _render_upi_qr_popup_if_any()
 
     # Section header above the form — cosmetic only; re-enable if useful:
     # st.markdown(
@@ -934,7 +1219,7 @@ def _render_donation_app() -> None:
         name = st.text_input(
             "Full name *",
             placeholder="e.g. Rajesh Sharma",
-            help="Name as it should appear on the e-receipt.",
+            help="Name as it should appear on the e-pawati.",
         )
 
         col_phone, col_amount = st.columns(2)
@@ -942,7 +1227,7 @@ def _render_donation_app() -> None:
             whatsapp = st.text_input(
                 "WhatsApp number *",
                 placeholder="10-digit mobile",
-                help="Used later for WhatsApp e-receipt delivery.",
+                help="Used later for WhatsApp e-pawati delivery.",
             )
         with col_amount:
             # text_input: real placeholder, full-width field, no +/- steppers
@@ -967,7 +1252,7 @@ def _render_donation_app() -> None:
 
         st.markdown("")  # small spacer before CTA
         submitted = st.form_submit_button(
-            "✨  Generate e-receipt",
+            "✨  Generate e-pawati",
             type="primary",
             use_container_width=True,
         )
@@ -999,7 +1284,7 @@ def _render_donation_app() -> None:
     _render_receipt_success_if_any()
 
     st.markdown(
-        '<p class="vr-footnote">Navayuvak Mitra Mandal · E-Receipts</p>',
+        '<p class="vr-footnote">Navayuvak Mitra Mandal · E-Pawati</p>',
         unsafe_allow_html=True,
     )
 
