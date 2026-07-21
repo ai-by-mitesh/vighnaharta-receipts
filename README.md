@@ -18,12 +18,23 @@ A simple staff-facing web app to issue donation receipts: enter donor details, g
 
 Built entirely with **[Grok Build](https://x.ai)** by xAI — yes, the whole thing.
 
+## Layout
+
+```
+app.py          # Streamlit entrypoint (UI)
+lib/            # app modules (auth, sheets, PDF, UPI QR, …)
+assets/         # fonts, images, e-pawati PDF template
+scripts/        # local helper tools
+.streamlit/     # config + secrets (not committed)
+```
+
 ## Run locally
 
 Python 3.13+, then:
 
 ```bash
 pip install -r requirements.txt
+# or: uv sync && uv run streamlit run app.py
 streamlit run app.py
 ```
 

@@ -20,9 +20,9 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from utils import amount_to_words, now_ist
+from lib.utils import amount_to_words, now_ist
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati.pdf"
 FONTS_DIR = PROJECT_ROOT / "assets" / "fonts"
 POPPINS_REGULAR = FONTS_DIR / "Poppins-Regular.ttf"

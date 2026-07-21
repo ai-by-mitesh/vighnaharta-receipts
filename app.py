@@ -25,16 +25,16 @@ from typing import Any
 
 import streamlit as st
 
-from auth import (
+from lib.auth import (
     ensure_active_session,
     render_login_page,
     # render_session_bar,  # re-enable with the session bar call below
 )
-from pdf_generator import DEFAULT_NOTES
-from receipt_service import generate_donation_receipt
-from sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
-from upi_qr import generate_upi_qr_for_note
-from utils import format_currency, format_receipt_number, normalize_phone, now_ist
+from lib.pdf_generator import DEFAULT_NOTES
+from lib.receipt_service import generate_donation_receipt
+from lib.sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
+from lib.upi_qr import generate_upi_qr_for_note
+from lib.utils import format_currency, format_receipt_number, normalize_phone, now_ist
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}

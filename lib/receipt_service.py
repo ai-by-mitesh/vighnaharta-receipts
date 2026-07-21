@@ -19,8 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pdf_generator import generate_receipt
-from template_receipt import generate_template_receipt
+from lib.pdf_generator import generate_receipt
+from lib.template_receipt import generate_template_receipt
 
 # Canonical method names used after normalization.
 METHOD_FPDF = "fpdf"
