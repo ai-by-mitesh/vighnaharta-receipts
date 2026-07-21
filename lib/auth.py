@@ -23,7 +23,7 @@ from typing import Any
 
 import streamlit as st
 
-from utils import as_naive_ist, now_ist
+from lib.utils import as_naive_ist, now_ist
 
 # Idle timeout (30 minutes of no user interaction)
 SESSION_TIMEOUT_MINUTES = 60

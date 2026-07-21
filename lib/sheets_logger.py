@@ -31,7 +31,7 @@ from typing import Any
 import gspread
 from google.oauth2.service_account import Credentials
 
-from utils import format_receipt_number, next_sequence_from_last, now_ist
+from lib.utils import format_receipt_number, next_sequence_from_last, now_ist
 
 # Columns written to the worksheet (header row expected in row 1)
 HEADERS = [
@@ -145,7 +145,8 @@ def _build_credentials() -> Credentials:
     env_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     if env_path:
         candidates.append(Path(env_path))
-    candidates.append(Path(__file__).resolve().parent / "service_account.json")
+    # Project root (parent of lib/), not the lib/ package dir
+    candidates.append(Path(__file__).resolve().parent.parent / "service_account.json")
 
     for path in candidates:
         if path.is_file():

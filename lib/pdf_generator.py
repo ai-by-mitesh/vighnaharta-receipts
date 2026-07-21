@@ -17,7 +17,7 @@ from typing import Any
 
 from fpdf import FPDF
 
-from utils import now_ist
+from lib.utils import now_ist
 
 # ── Brand palette ────────────────────────────────────────────────────────────
 ORANGE = (245, 140, 30)       # #F58C1E
@@ -30,7 +30,7 @@ LINE = (232, 216, 198)
 WHITE = (255, 255, 255)
 ROW_ALT = (255, 248, 241)
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
 IMAGES_DIR = ASSETS_DIR / "images"
 FONTS_DIR = ASSETS_DIR / "fonts"
