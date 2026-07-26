@@ -13,7 +13,8 @@ Donation flow (after login):
 3. Generate PDF receipt
 4. Upload PDF to Supabase Storage (soft-fail)
 5. Log the donation row (incl. PDF URL) to Google Sheets
-6. Show success UI; optional browser download if PDF_LOCAL_STORAGE is true
+6. Send e-pawati via WasenderAPI (document + follow-up text; soft-fail)
+7. Show success UI; optional browser download if PDF_LOCAL_STORAGE is true
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from lib.sheets_logger import append_donation, connect_to_sheet, get_next_receip
 from lib.supabase_storage import upload_receipt_pdf
 from lib.upi_qr import generate_upi_qr_for_note
 from lib.utils import format_currency, format_receipt_number, normalize_phone, now_ist
+from lib.wasender_sender import send_receipt_whatsapp
 
 PAYMENT_MODES = ("Cash", "UPI", "Other")
 PAYMENT_ICONS = {"Cash": "💵", "UPI": "📱", "Other": "💳"}
@@ -1012,6 +1014,7 @@ def _render_success_card(
     notes: str,
     sheet_ok: bool,
     storage_ok: bool,
+    whatsapp_ok: bool,
     seconds_left: int,
     local_download: bool = False,
 ) -> None:
@@ -1036,6 +1039,11 @@ def _render_success_card(
         '<div class="vr-status-ok">✓ Stored on Supabase</div>'
         if storage_ok
         else '<div class="vr-status-warn">⚠ Storage upload failed</div>'
+    )
+    whatsapp_html = (
+        '<div class="vr-status-ok">✓ Sent on WhatsApp</div>'
+        if whatsapp_ok
+        else '<div class="vr-status-warn">⚠ WhatsApp send failed</div>'
     )
     notes_block = ""
     if notes.strip():
@@ -1075,6 +1083,7 @@ def _render_success_card(
                         <div class="val" style="display:flex;flex-direction:column;gap:0.2rem;align-items:flex-start;">
                             {sheet_html}
                             {storage_html}
+                            {whatsapp_html}
                         </div>
                     </div>
                     <!-- {notes_block} --!>
@@ -1211,6 +1220,21 @@ def _process_donation(
         except Exception as exc:
             st.error(f"PDF created, but logging to Google Sheets failed: {exc}")
 
+    # Soft-fail: receipt is already issued/stored even if WhatsApp is down.
+    whatsapp_ok = False
+    if pdf_url:
+        try:
+            send_receipt_whatsapp(
+                phone=phone,
+                document_url=pdf_url,
+                file_name=pdf_name or f"{receipt_no}.pdf",
+            )
+            whatsapp_ok = True
+        except Exception as exc:
+            st.warning(f"Receipt saved, but WhatsApp send failed: {exc}")
+    elif storage_ok is False:
+        st.warning("WhatsApp skipped — no public PDF URL (Supabase upload failed).")
+
     # Persist so the success card survives the download-button rerun.
     # pdf_bytes only needed when local browser download is enabled.
     local_dl = pdf_local_download_enabled()
@@ -1224,6 +1248,7 @@ def _process_donation(
         "notes": notes_final,
         "sheet_ok": sheet_ok,
         "storage_ok": storage_ok,
+        "whatsapp_ok": whatsapp_ok,
         "pdf_url": pdf_url,
         "pdf_name": pdf_name,
         "local_download": local_dl,
@@ -1268,6 +1293,7 @@ def _render_receipt_success_if_any() -> None:
         notes=str(data.get("notes") or ""),
         sheet_ok=bool(data.get("sheet_ok")),
         storage_ok=bool(data.get("storage_ok")),
+        whatsapp_ok=bool(data.get("whatsapp_ok")),
         seconds_left=seconds_left,
         local_download=local_dl,
     )
