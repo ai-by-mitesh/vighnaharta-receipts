@@ -11,14 +11,16 @@ Donation flow (after login):
 1. Validate the form
 2. Fetch next receipt number from Google Sheets (fallback if offline)
 3. Generate PDF receipt
-4. Log the donation row to Google Sheets
-5. Show success UI and auto-download the PDF in the browser
+4. Upload PDF to Supabase Storage (soft-fail)
+5. Log the donation row (incl. PDF URL) to Google Sheets
+6. Show success UI; optional browser download if PDF_LOCAL_STORAGE is true
 """
 
 from __future__ import annotations
 
 import base64
 import html
+import os
 import time
 from datetime import timedelta
 from typing import Any
@@ -33,6 +35,7 @@ from lib.auth import (
 from lib.pdf_generator import DEFAULT_NOTES
 from lib.receipt_service import generate_donation_receipt
 from lib.sheets_logger import append_donation, connect_to_sheet, get_next_receipt_number
+from lib.supabase_storage import upload_receipt_pdf
 from lib.upi_qr import generate_upi_qr_for_note
 from lib.utils import format_currency, format_receipt_number, normalize_phone, now_ist
 
@@ -44,6 +47,51 @@ SUCCESS_CARD_SECONDS = 5
 _SESSION_SUCCESS_KEY = "receipt_success"
 _SESSION_DOWNLOAD_PENDING_KEY = "receipt_success_download_pending"
 _SESSION_UPI_QR_KEY = "upi_qr_popup"
+
+# Truthy strings for PDF_LOCAL_STORAGE (env / secrets). Default is off.
+_TRUTHY = frozenset({"1", "true", "yes", "on", "y"})
+
+
+def _as_bool(value: object) -> bool:
+    """Parse common bool-ish env/secret values; default False."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in _TRUTHY
+
+
+def pdf_local_download_enabled() -> bool:
+    """
+    Whether to auto-download the PDF in the browser after issuing a receipt.
+
+    Default **False** — Supabase is the primary stored copy.
+
+    Enable with either:
+      - env ``PDF_LOCAL_STORAGE=true``
+      - secrets ``[receipt] pdf_local_storage = true`` (or ``local_download``)
+    """
+    env = os.environ.get("PDF_LOCAL_STORAGE")
+    if env is not None and str(env).strip() != "":
+        return _as_bool(env)
+
+    try:
+        section = st.secrets.get("receipt")
+        if section is not None:
+            if hasattr(section, "get"):
+                raw = section.get("pdf_local_storage")
+                if raw is None:
+                    raw = section.get("local_download")
+            else:
+                raw = None
+            if raw is not None:
+                return _as_bool(raw)
+        top = st.secrets.get("PDF_LOCAL_STORAGE")
+        if top is not None:
+            return _as_bool(top)
+    except Exception:
+        pass
+    return False
 
 # QR icon as CSS data-URI (white stroke) painted on the Streamlit button
 _HERO_QR_ICON_CSS = (
@@ -963,7 +1011,9 @@ def _render_success_card(
     date_display: str,
     notes: str,
     sheet_ok: bool,
+    storage_ok: bool,
     seconds_left: int,
+    local_download: bool = False,
 ) -> None:
     """Polished post-submit summary card (overlay)."""
     icon = PAYMENT_ICONS.get(payment_mode, "💳")
@@ -975,11 +1025,17 @@ def _render_success_card(
     safe_amount = html.escape(format_currency(amount))
     left = max(0, int(seconds_left))
     close_label = "closes in 1s" if left == 1 else f"closes in {left}s"
+    foot_prefix = "Download started · " if local_download else ""
 
     sheet_html = (
-        '<span class="vr-status-ok">✓ Logged to Google Sheets</span>'
+        '<div class="vr-status-ok">✓ Logged to Google Sheets</div>'
         if sheet_ok
-        else '<span class="vr-status-warn">⚠ Not logged to Sheets</span>'
+        else '<div class="vr-status-warn">⚠ Not logged to Sheets</div>'
+    )
+    storage_html = (
+        '<div class="vr-status-ok">✓ Stored on Supabase</div>'
+        if storage_ok
+        else '<div class="vr-status-warn">⚠ Storage upload failed</div>'
     )
     notes_block = ""
     if notes.strip():
@@ -1016,11 +1072,14 @@ def _render_success_card(
                     </div>
                     <div class="vr-field full">
                         <div class="lbl">Sync status</div>
-                        <div class="val">{sheet_html}</div>
+                        <div class="val" style="display:flex;flex-direction:column;gap:0.2rem;align-items:flex-start;">
+                            {sheet_html}
+                            {storage_html}
+                        </div>
                     </div>
                     <!-- {notes_block} --!>
                 </div>
-                <div class="vr-success-foot">Download started · {close_label}</div>
+                <div class="vr-success-foot">{foot_prefix}{close_label}</div>
             </div>
         </div>
         """,
@@ -1128,6 +1187,15 @@ def _process_donation(
         st.error(f"Failed to generate PDF: {exc}")
         return
 
+    # Soft-fail: local download + Sheets must still work if storage is down.
+    pdf_url = ""
+    storage_ok = False
+    try:
+        pdf_url = upload_receipt_pdf(pdf_bytes, receipt_no=receipt_no)
+        storage_ok = True
+    except Exception as exc:
+        st.warning(f"PDF ready, but Supabase upload failed: {exc}")
+
     sheet_ok = False
     if worksheet is not None:
         try:
@@ -1135,6 +1203,7 @@ def _process_donation(
                 {
                     **donation,
                     "date": date_log,
+                    "pdf_url": pdf_url,
                 },
                 worksheet=worksheet,
             )
@@ -1143,7 +1212,9 @@ def _process_donation(
             st.error(f"PDF created, but logging to Google Sheets failed: {exc}")
 
     # Persist so the success card survives the download-button rerun.
-    st.session_state[_SESSION_SUCCESS_KEY] = {
+    # pdf_bytes only needed when local browser download is enabled.
+    local_dl = pdf_local_download_enabled()
+    success_payload: dict[str, Any] = {
         "receipt_no": receipt_no,
         "name": name.strip(),
         "amount": amount,
@@ -1152,20 +1223,25 @@ def _process_donation(
         "date_display": date_display,
         "notes": notes_final,
         "sheet_ok": sheet_ok,
-        "pdf_bytes": pdf_bytes,
+        "storage_ok": storage_ok,
+        "pdf_url": pdf_url,
         "pdf_name": pdf_name,
+        "local_download": local_dl,
         "shown_at": time.time(),
     }
-    st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = True
+    if local_dl:
+        success_payload["pdf_bytes"] = pdf_bytes
+    st.session_state[_SESSION_SUCCESS_KEY] = success_payload
+    st.session_state[_SESSION_DOWNLOAD_PENDING_KEY] = local_dl
 
 
 @st.fragment(run_every=timedelta(seconds=1))
 def _render_receipt_success_if_any() -> None:
     """
-    Show the success receipt as a fixed overlay, auto-download once, hide after 10s.
+    Show the success receipt as a fixed overlay, optionally auto-download once.
 
-    Fragment ticks every second so the popup can dismiss without freezing the
-    page. Data lives in session_state so the download-button rerun keeps it.
+    Browser download is gated by ``PDF_LOCAL_STORAGE`` (default off). Fragment
+    ticks every second so the popup can dismiss without freezing the page.
     """
     data: dict[str, Any] | None = st.session_state.get(_SESSION_SUCCESS_KEY)
     if not data:
@@ -1181,6 +1257,7 @@ def _render_receipt_success_if_any() -> None:
         st.session_state.pop(_SESSION_DOWNLOAD_PENDING_KEY, None)
         return
 
+    local_dl = bool(data.get("local_download"))
     _render_success_card(
         receipt_no=str(data["receipt_no"]),
         name=str(data["name"]),
@@ -1190,8 +1267,14 @@ def _render_receipt_success_if_any() -> None:
         date_display=str(data["date_display"]),
         notes=str(data.get("notes") or ""),
         sheet_ok=bool(data.get("sheet_ok")),
+        storage_ok=bool(data.get("storage_ok")),
         seconds_left=seconds_left,
+        local_download=local_dl,
     )
+
+    # Keep download path intact; only run when PDF_LOCAL_STORAGE is enabled.
+    if not local_dl:
+        return
 
     pdf_bytes = data.get("pdf_bytes")
     if not isinstance(pdf_bytes, (bytes, bytearray)):

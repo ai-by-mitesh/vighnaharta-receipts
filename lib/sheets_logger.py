@@ -42,6 +42,7 @@ HEADERS = [
     "Amount",
     "Payment Mode",
     "Notes",
+    "PDF URL",
 ]
 
 SCOPES = [
@@ -190,10 +191,13 @@ def connect_to_sheet(
         worksheet = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(HEADERS))
         worksheet.append_row(HEADERS, value_input_option="USER_ENTERED")
 
-    # Ensure header row is present on an empty sheet
+    # Ensure header row is present on an empty sheet; add PDF URL if missing.
     existing = worksheet.row_values(1)
     if not existing:
         worksheet.append_row(HEADERS, value_input_option="USER_ENTERED")
+    elif "PDF URL" not in existing:
+        # Existing live sheet predates storage — append column header only.
+        worksheet.update_cell(1, len(existing) + 1, "PDF URL")
 
     return worksheet
 
@@ -250,7 +254,7 @@ def append_donation(
     Append one donation row to Google Sheets.
 
     Expected keys: receipt_no, donor_name, whatsapp, amount, payment_mode,
-    notes (optional), date (optional).
+    notes (optional), date (optional), pdf_url (optional).
 
     Args:
         donation: Donation field mapping.
@@ -273,6 +277,7 @@ def append_donation(
         donation["amount"],
         str(donation.get("payment_mode", "")).strip(),
         str(donation.get("notes") or "").strip(),
+        str(donation.get("pdf_url") or "").strip(),
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
     return row
