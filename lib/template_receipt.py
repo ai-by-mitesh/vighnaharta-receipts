@@ -1,9 +1,9 @@
 """
 Template-overlay PDF receipts (e-pawati background).
 
-Stamps donor fields onto ``assets/pdf/e-pawati.pdf`` using ReportLab + pypdf.
-Coordinates match ``scripts/find_pdf_coords.py`` (top-left origin); Y is
-converted to ReportLab's bottom-left system when drawing.
+Stamps donor fields onto ``assets/pdf/e-pawati-vertical.pdf`` using ReportLab +
+pypdf. Coordinates match ``scripts/find_pdf_coords.py`` / ``overlay_receipt.py``
+(top-left origin); Y is converted to ReportLab's bottom-left system when drawing.
 
 This module does not allocate receipt numbers — callers pass a filled
 ``donation`` dict (same shape as ``pdf_generator.generate_receipt``).
@@ -23,26 +23,28 @@ from reportlab.pdfgen import canvas
 from lib.utils import amount_to_words, now_ist
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati.pdf"
+TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati-vertical.pdf"
 FONTS_DIR = PROJECT_ROOT / "assets" / "fonts"
 POPPINS_REGULAR = FONTS_DIR / "Poppins-Regular.ttf"
 POPPINS_BOLD = FONTS_DIR / "Poppins-Bold.ttf"
 
-# Paste values from find_pdf_coords.py: (x, y) top-left origin, PDF points.
+# Vertical e-pawati: paste from find_pdf_coords.py (x, y) top-left origin, PDF points.
+# Tuned in scripts/overlay_receipt.py before promotion to production.
 COORDS: dict[str, tuple[float, float]] = {
-    "receipt_no": (353.5, 152.5),
-    "date": (515.0, 152.5),
-    "donor_name": (344.5, 174.5),
-    "amount_words": (312.0, 221.5),
-    "amount_figures": (508.5, 250.0),
+    "receipt_no": (155.5, 697.5),
+    "date": (439.5, 697.5),
+    "donor_name": (139.5, 733.5),
+    "amount_words": (89.5, 814.5),
+    "amount_figures": (427.5, 860.5),
 }
 
 # Same typeface as the Streamlit UI (bundled under assets/fonts/).
+# Sizes match the vertical layout tuned in scripts/overlay_receipt.py.
 FONT_NAME = "Poppins"
-FONT_SIZE = 10
+FONT_SIZE = 15.5
 # Amount-in-words is long; start smaller and shrink further to stay in the blank.
-AMOUNT_WORDS_FONT_SIZE = 8
-AMOUNT_WORDS_MIN_SIZE = 6.5
+AMOUNT_WORDS_FONT_SIZE = 13.5
+AMOUNT_WORDS_MIN_SIZE = 11.5
 # Right margin so text does not run into the decorative panel / page edge.
 AMOUNT_WORDS_RIGHT_PAD = 30
 
@@ -172,11 +174,12 @@ def generate_template_receipt(
 
 
 if __name__ == "__main__":
-    # Smallest checks: Poppins registers, amount-in-words fits ≤ 1 lakh on the blank.
+    # Smallest checks: Poppins registers, amount-in-words fits on the vertical blank.
     font = _ensure_poppins()
     assert font == "Poppins", font
+    assert TEMPLATE_PDF.is_file(), TEMPLATE_PDF
     long = amount_to_words(73_373)  # longest wording at/under 1 lakh in practice
-    page_w = 618.34
+    page_w = float(PdfReader(str(TEMPLATE_PDF)).pages[0].mediabox.width)
     x = COORDS["amount_words"][0]
     max_w = page_w - x - AMOUNT_WORDS_RIGHT_PAD
     size = _fit_font_size(
@@ -185,4 +188,16 @@ if __name__ == "__main__":
     width = pdfmetrics.stringWidth(long, font, size)
     assert width <= max_w + 0.5, (width, max_w, size, long)
     assert size <= AMOUNT_WORDS_FONT_SIZE
+
+    # End-to-end stamp once (in-memory only).
+    pdf_bytes, name = generate_template_receipt(
+        {
+            "receipt_no": "DCV-2026-0042",
+            "donor_name": "Mandy Ramalingam Swamy",
+            "amount": 98909,
+        }
+    )
+    assert name == "DCV-2026-0042.pdf"
+    assert pdf_bytes.startswith(b"%PDF")
     print(f"ok: {font} size={size} width={width:.1f}/{max_w:.1f} text={long!r}")
+    print(f"ok: generated {name} ({len(pdf_bytes)} bytes) from {TEMPLATE_PDF.name}")
