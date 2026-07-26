@@ -256,6 +256,10 @@ def append_donation(
     Expected keys: receipt_no, donor_name, whatsapp, amount, payment_mode,
     notes (optional), date (optional), pdf_url (optional).
 
+    Writes an explicit ``A{{n}}:H{{n}}`` range (not ``append_row`` table
+    detection) so the PDF URL column is never dropped when older rows only
+    filled A–G.
+
     Args:
         donation: Donation field mapping.
         worksheet: Open worksheet; opens a new connection if omitted.
@@ -279,7 +283,15 @@ def append_donation(
         str(donation.get("notes") or "").strip(),
         str(donation.get("pdf_url") or "").strip(),
     ]
-    ws.append_row(row, value_input_option="USER_ENTERED")
+    # Next empty row by receipt-number column (A), same as historical append.
+    next_row = len(ws.col_values(1)) + 1
+    # RAW: store the full URL string as-is (USER_ENTERED can mangle long URLs).
+    end_col = chr(ord("A") + len(row) - 1)  # HEADERS fits in A–H
+    ws.update(
+        values=[row],
+        range_name=f"A{next_row}:{end_col}{next_row}",
+        value_input_option="RAW",
+    )
     return row
 
 

@@ -32,7 +32,10 @@ from lib.utils import now_ist
 
 # Default object key when secrets omit path_style.
 _DEFAULT_PATH_STYLE = "{current_year}/{receipt_no}.pdf"
-_UPLOAD_TIMEOUT_S = 30
+# Cloud egress + ~1MB PDFs: 30s was tight if the response is slow after Supabase
+# already stored the object (client timeout → empty pdf_url in Sheets).
+_UPLOAD_TIMEOUT_S = 90
+_VERIFY_TIMEOUT_S = 20
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -171,6 +174,35 @@ def public_object_url(base_url: str, bucket: str, object_path: str) -> str:
     return f"{base}/storage/v1/object/public/{bucket}/{encoded}"
 
 
+def receipt_public_url(receipt_no: str, *, year: int | None = None) -> str:
+    """
+    Deterministic public URL for a receipt object (no network).
+
+    Same path rules as ``upload_receipt_pdf`` — safe to log even if the upload
+    response is lost after Supabase already accepted the object.
+    """
+    cfg = load_supabase_config()
+    object_path = build_object_path(
+        receipt_no, path_style=cfg["path_style"], year=year
+    )
+    return public_object_url(cfg["url"], cfg["bucket"], object_path)
+
+
+def _object_is_publicly_reachable(url: str) -> bool:
+    """Return True if a public object URL responds 200 (HEAD, then GET)."""
+    try:
+        head = requests.head(url, timeout=_VERIFY_TIMEOUT_S, allow_redirects=True)
+        if head.status_code == 200:
+            return True
+        # Some CDNs dislike HEAD — fall back to a short GET.
+        get = requests.get(url, timeout=_VERIFY_TIMEOUT_S, stream=True)
+        ok = get.status_code == 200
+        get.close()
+        return ok
+    except requests.RequestException:
+        return False
+
+
 def upload_receipt_pdf(
     pdf_bytes: bytes,
     *,
@@ -199,6 +231,7 @@ def upload_receipt_pdf(
 
     cfg = load_supabase_config()
     object_path = build_object_path(receipt_no, path_style=cfg["path_style"])
+    public_url = public_object_url(cfg["url"], cfg["bucket"], object_path)
     endpoint = (
         f"{cfg['url']}/storage/v1/object/{cfg['bucket']}/{object_path}"
     )
@@ -218,6 +251,11 @@ def upload_receipt_pdf(
             timeout=_UPLOAD_TIMEOUT_S,
         )
     except requests.RequestException as exc:
+        # Streamlit Cloud: upload can succeed server-side while the client times
+        # out reading the response. If the public object is already there, treat
+        # as success so Sheets still gets the PDF URL.
+        if _object_is_publicly_reachable(public_url):
+            return public_url
         raise RuntimeError(f"Supabase storage upload request failed: {exc}") from exc
 
     if response.status_code not in (200, 201):
@@ -225,11 +263,14 @@ def upload_receipt_pdf(
         detail = (response.text or "").strip()
         if len(detail) > 400:
             detail = detail[:400] + "…"
+        # Same recovery: object may exist from a prior attempt / partial success.
+        if _object_is_publicly_reachable(public_url):
+            return public_url
         raise RuntimeError(
             f"Supabase storage upload failed (HTTP {response.status_code}): {detail or 'no body'}"
         )
 
-    return public_object_url(cfg["url"], cfg["bucket"], object_path)
+    return public_url
 
 
 def _self_check() -> None:
