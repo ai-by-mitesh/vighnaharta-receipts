@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
+from reportlab.lib.colors import black, white
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -27,26 +28,37 @@ TEMPLATE_PDF = PROJECT_ROOT / "assets" / "pdf" / "e-pawati-vertical.pdf"
 FONTS_DIR = PROJECT_ROOT / "assets" / "fonts"
 POPPINS_REGULAR = FONTS_DIR / "Poppins-Regular.ttf"
 POPPINS_BOLD = FONTS_DIR / "Poppins-Bold.ttf"
+# True Devanagari face for Marathi digits (Poppins only has partial/fallback glyphs).
+NOTO_DEVANAGARI = FONTS_DIR / "NotoSansDevanagari-Regular.ttf"
+
+FOUNDING_YEAR = 1968  # Navayuvak Mitra Mandal / Dadar Cha Vighnaharta
+# Western digits → Devanagari (Marathi) digits for the year-count badge.
+_DEVANAGARI_DIGITS = str.maketrans("0123456789", "०१२३४५६७८९")
 
 # Vertical e-pawati: paste from find_pdf_coords.py (x, y) top-left origin, PDF points.
 # Tuned in scripts/overlay_receipt.py before promotion to production.
 COORDS: dict[str, tuple[float, float]] = {
     "receipt_no": (155.5, 697.5),
-    "date": (439.5, 697.5),
+    "date": (438.5, 697.5),
     "donor_name": (139.5, 733.5),
     "amount_words": (89.5, 814.5),
     "amount_figures": (427.5, 860.5),
+    # White Marathi year-count badge near top (current_year - 1968 + 1).
+    "ganpati_years": (440.0, 61.5),
 }
 
 # Same typeface as the Streamlit UI (bundled under assets/fonts/).
 # Sizes match the vertical layout tuned in scripts/overlay_receipt.py.
 FONT_NAME = "Poppins"
-FONT_SIZE = 15.5
+FONT_SIZE = 16.0
 # Amount-in-words is long; start smaller and shrink further to stay in the blank.
-AMOUNT_WORDS_FONT_SIZE = 13.5
-AMOUNT_WORDS_MIN_SIZE = 11.5
+AMOUNT_WORDS_FONT_SIZE = 15.0
+AMOUNT_WORDS_MIN_SIZE = 11.0
 # Right margin so text does not run into the decorative panel / page edge.
 AMOUNT_WORDS_RIGHT_PAD = 30
+# Year-count badge (white Marathi digits via Noto Sans Devanagari).
+GANPATI_YEARS_FONT_NAME = "NotoSansDevanagari"
+GANPATI_YEARS_FONT_SIZE = 13.0
 
 
 def _ensure_poppins() -> str:
@@ -62,6 +74,37 @@ def _ensure_poppins() -> str:
     return "Helvetica"
 
 
+def _ensure_devanagari() -> str:
+    """
+    Register Noto Sans Devanagari for Marathi digits.
+
+    Falls back to Poppins only if the TTF is missing (glyphs may look wrong).
+    """
+    if GANPATI_YEARS_FONT_NAME in pdfmetrics.getRegisteredFontNames():
+        return GANPATI_YEARS_FONT_NAME
+    if NOTO_DEVANAGARI.is_file():
+        pdfmetrics.registerFont(
+            TTFont(GANPATI_YEARS_FONT_NAME, str(NOTO_DEVANAGARI))
+        )
+        return GANPATI_YEARS_FONT_NAME
+    return _ensure_poppins()
+
+
+def ganpati_year_count(year: int | None = None) -> int:
+    """
+    Years of celebration: ``current_year - founding_year + 1``.
+
+    Example (2026): 2026 - 1968 + 1 = 59.
+    """
+    y = year if year is not None else now_ist().year
+    return y - FOUNDING_YEAR + 1
+
+
+def to_marathi_digits(n: int | str) -> str:
+    """Convert Western digits to Devanagari (Marathi) digits, e.g. 59 → ५९."""
+    return str(n).translate(_DEVANAGARI_DIGITS)
+
+
 def _format_amount_figures(amount: float | int) -> str:
     """Figures for the template amount box, e.g. ``501/-``."""
     if float(amount).is_integer():
@@ -75,6 +118,7 @@ def build_overlay_fields(donation: dict[str, Any]) -> dict[str, str]:
 
     Expected keys: ``receipt_no``, ``donor_name``, ``amount``.
     Date is always today's date as DD/MM/YYYY in IST. Amount in words is computed.
+    ``ganpati_years`` is derived (Marathi digits) from the calendar year.
     """
     amount = donation["amount"]
     return {
@@ -83,6 +127,7 @@ def build_overlay_fields(donation: dict[str, Any]) -> dict[str, str]:
         "donor_name": str(donation["donor_name"]).strip(),
         "amount_words": amount_to_words(amount),
         "amount_figures": _format_amount_figures(amount),
+        "ganpati_years": to_marathi_digits(ganpati_year_count()),
     }
 
 
@@ -110,7 +155,11 @@ def _draw_overlay(
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_width, page_height))
 
+    # Body fields in black (default).
+    c.setFillColor(black)
     for key, (x, y_top) in COORDS.items():
+        if key == "ganpati_years":
+            continue
         text = fields[key]
         if key == "amount_words":
             max_width = max(40.0, page_width - x - AMOUNT_WORDS_RIGHT_PAD)
@@ -127,6 +176,18 @@ def _draw_overlay(
         # Top-left click coords → ReportLab baseline Y.
         y = page_height - y_top - size * 0.8
         c.drawString(x, y, text)
+
+    # Year-count badge: white Marathi digits in a Devanagari face (e.g. ५९).
+    years_key = "ganpati_years"
+    if years_key in COORDS:
+        x, y_top = COORDS[years_key]
+        years_text = fields.get(years_key) or to_marathi_digits(ganpati_year_count())
+        size = GANPATI_YEARS_FONT_SIZE
+        dev_font = _ensure_devanagari()
+        c.setFillColor(white)
+        c.setFont(dev_font, size)
+        y = page_height - y_top - size * 0.8
+        c.drawString(x, y, years_text)
 
     c.save()
     buf.seek(0)
@@ -174,10 +235,18 @@ def generate_template_receipt(
 
 
 if __name__ == "__main__":
-    # Smallest checks: Poppins registers, amount-in-words fits on the vertical blank.
+    # Smallest checks: fonts register, amount-in-words fits, year badge is Marathi.
     font = _ensure_poppins()
+    dev = _ensure_devanagari()
     assert font == "Poppins", font
+    assert dev == GANPATI_YEARS_FONT_NAME, dev
     assert TEMPLATE_PDF.is_file(), TEMPLATE_PDF
+    assert NOTO_DEVANAGARI.is_file(), NOTO_DEVANAGARI
+
+    years = ganpati_year_count(2026)
+    assert years == 59, years
+    assert to_marathi_digits(years) == "५९", to_marathi_digits(years)
+
     long = amount_to_words(73_373)  # longest wording at/under 1 lakh in practice
     page_w = float(PdfReader(str(TEMPLATE_PDF)).pages[0].mediabox.width)
     x = COORDS["amount_words"][0]
@@ -199,5 +268,10 @@ if __name__ == "__main__":
     )
     assert name == "DCV-2026-0042.pdf"
     assert pdf_bytes.startswith(b"%PDF")
+    fields = build_overlay_fields(
+        {"receipt_no": "DCV-2026-0042", "donor_name": "Test", "amount": 501}
+    )
+    assert fields["ganpati_years"] == to_marathi_digits(ganpati_year_count())
     print(f"ok: {font} size={size} width={width:.1f}/{max_w:.1f} text={long!r}")
+    print(f"ok: years={fields['ganpati_years']} font={dev} size={GANPATI_YEARS_FONT_SIZE}")
     print(f"ok: generated {name} ({len(pdf_bytes)} bytes) from {TEMPLATE_PDF.name}")
