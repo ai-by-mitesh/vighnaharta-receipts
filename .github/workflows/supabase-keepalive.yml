@@ -1,0 +1,87 @@
+# Keep the free-tier Supabase project from pausing after ~7 days of inactivity.
+# Pings public.keepalive twice a week (and on manual run).
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL          e.g. https://xxxx.supabase.co
+#   SUPABASE_SECRET_KEY   service role / secret key (bypasses RLS)
+#
+# One-time SQL (Supabase SQL Editor) if not already applied:
+#   create table if not exists public.keepalive (
+#     id int primary key default 1,
+#     last_ping timestamptz default now()
+#   );
+#   insert into public.keepalive (id) values (1)
+#   on conflict (id) do nothing;
+
+name: Supabase keep-alive
+
+on:
+  schedule:
+    # Twice a week: Monday + Thursday 06:00 UTC (~11:30 IST)
+    - cron: "0 6 * * 1,4"
+  workflow_dispatch: # Actions tab → Run workflow
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping keepalive table
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::Missing SUPABASE_URL or SUPABASE_SECRET_KEY in repo Actions secrets."
+            exit 1
+          fi
+
+      - name: Heartbeat (GET + update last_ping)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          BASE="${SUPABASE_URL%/}"
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          echo "GET keepalive…"
+          HTTP_GET=$(curl -sS -o /tmp/keepalive_get.json -w "%{http_code}" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
+            -H "Accept: application/json" \
+            "${BASE}/rest/v1/keepalive?select=id,last_ping&limit=1")
+
+          echo "GET HTTP ${HTTP_GET}"
+          cat /tmp/keepalive_get.json
+          echo
+          if [ "$HTTP_GET" != "200" ]; then
+            echo "::error::GET failed (HTTP ${HTTP_GET}). Is public.keepalive created and project unpaused?"
+            exit 1
+          fi
+
+          echo "PATCH last_ping=${NOW}…"
+          HTTP_PATCH=$(curl -sS -o /tmp/keepalive_patch.json -w "%{http_code}" \
+            -X PATCH \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d "{\"last_ping\": \"${NOW}\"}" \
+            "${BASE}/rest/v1/keepalive?id=eq.1")
+
+          echo "PATCH HTTP ${HTTP_PATCH}"
+          cat /tmp/keepalive_patch.json
+          echo
+          # 200 = updated rows returned; 204 = no content
+          if [ "$HTTP_PATCH" != "200" ] && [ "$HTTP_PATCH" != "204" ]; then
+            echo "::error::PATCH failed (HTTP ${HTTP_PATCH})."
+            exit 1
+          fi
+
+          echo "Keep-alive OK at ${NOW}"
