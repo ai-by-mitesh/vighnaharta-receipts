@@ -9,7 +9,7 @@ Config (``.streamlit/secrets.toml``)::
 
     [wasenderapi]
     ws_api_key = "..."
-    plan = "trial"   # trial → 60s gap between messages (1 msg/min); else no wait
+    plan = "trial"   # trial → 60s gap; paid/other → 5s (Wasender rate limits)
     # optional:
     # endpoint = "https://www.wasenderapi.com/api/send-message"
 """
@@ -25,8 +25,9 @@ import requests
 
 DEFAULT_ENDPOINT = "https://www.wasenderapi.com/api/send-message"
 _REQUEST_TIMEOUT_S = 45
-# Trial plan rate limit: 1 message per minute.
-_TRIAL_INTER_MESSAGE_DELAY_S = 60
+# Wasender rate limits between the document + follow-up sends.
+_TRIAL_INTER_MESSAGE_DELAY_S = 60  # trial: 1 msg/min
+_PAID_INTER_MESSAGE_DELAY_S = 5  # paid: 1 msg / 5s
 
 # Receipt document caption (shared for every donor; only phone/url/filename vary).
 DOCUMENT_TEXT = (
@@ -83,7 +84,7 @@ def load_wasender_config() -> dict[str, str]:
     """
     Load WasenderAPI endpoint, bearer token, and plan.
 
-    Secrets: ``[wasenderapi] ws_api_key``, optional ``plan`` (``trial`` | other).
+    Secrets: ``[wasenderapi] ws_api_key``, optional ``plan`` (``trial`` | ``paid`` | …).
     Env: ``WASENDER_API_KEY``, ``WASENDER_ENDPOINT``, ``WASENDER_PLAN``.
     """
     secrets = _try_streamlit_secrets()
@@ -125,14 +126,15 @@ def inter_message_delay_seconds(plan: str | None = None) -> int:
     """
     Seconds to wait after a successful first send before the follow-up.
 
-    ``plan=trial`` → 60 (Wasender trial: 1 msg/min). Any other plan → 0.
+    - ``trial`` → 60 (1 msg/min)
+    - any other plan (``paid``, ``pro``, unset, …) → 5 (1 msg / 5s)
     """
     if plan is None:
         plan = load_wasender_config().get("plan", "")
     key = str(plan or "").strip().lower()
     if key == "trial":
         return _TRIAL_INTER_MESSAGE_DELAY_S
-    return 0
+    return _PAID_INTER_MESSAGE_DELAY_S
 
 
 def format_whatsapp_e164(phone: str, *, default_region: str = "91") -> str:
@@ -272,9 +274,9 @@ def _self_check() -> None:
     assert format_whatsapp_e164("09876543210") == "+919876543210"
     assert inter_message_delay_seconds("trial") == 60
     assert inter_message_delay_seconds("TRIAL") == 60
-    assert inter_message_delay_seconds("pro") == 0
-    assert inter_message_delay_seconds("paid") == 0
-    assert inter_message_delay_seconds("") == 0
+    assert inter_message_delay_seconds("pro") == 5
+    assert inter_message_delay_seconds("paid") == 5
+    assert inter_message_delay_seconds("") == 5
     print("wasender_sender self-check OK")
 
 
