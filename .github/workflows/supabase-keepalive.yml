@@ -17,8 +17,8 @@ name: Supabase keep-alive
 
 on:
   schedule:
-    # Daily 06:00 UTC (~11:30 IST)
-    - cron: "0 6 * * *"
+    # Daily once every hour
+    - cron: "0 * * * *"
   workflow_dispatch: # Actions tab → Run workflow
 
 permissions:
